@@ -31,7 +31,8 @@ time on.
 - [ ] No debug prints, commented-out code, or leftover TODOs.
 - [ ] Docs, doc-comments and public API documentation updated where the change touched them.
 - [ ] No secret, key, token or credential in the diff or in its history.
-- [ ] `unsafe` was not introduced — or, if it was, it is inventoried per AC-1 with its invariant stated.
+- [ ] `unsafe` was not introduced — or, if it was, it lives in one named module, is listed in
+      [`UNSAFE.md`](https://github.com/twohreichel/EuleDB/blob/main/UNSAFE.md) with its invariant, and every block carries a `// SAFETY:` comment.
 
 ## Commit messages
 
@@ -42,7 +43,7 @@ so the format is load-bearing, not cosmetic:
 
 `feat` / `fix` / `docs` / `refactor` / `perf` / `test` / `build` / `ci` / `chore`. A breaking change
 carries `!` after the scope or a `BREAKING CHANGE:` footer. See
-[CONTRIBUTING.md](../CONTRIBUTING.md).
+[CONTRIBUTING.md](https://github.com/twohreichel/EuleDB/blob/main/CONTRIBUTING.md).
 
 ## Licence
 
