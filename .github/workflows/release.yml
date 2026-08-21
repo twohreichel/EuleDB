@@ -106,7 +106,7 @@ jobs:
       # package by building it, so protoc is needed here as well as in CI.
       - uses: taiki-e/install-action@a2a5f6e99e1a31540baa0468acfa302cff0f359f # v2.86.4
         with:
-          tool: protoc@36.0
+          tool: protoc@3.35.1
       - uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
         id: auth
       # No --allow-dirty here, unlike the local gate: this runs from a clean tag checkout, so the check

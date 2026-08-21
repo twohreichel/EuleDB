@@ -64,9 +64,12 @@ jobs:
       # The on-disk format generates code from protobuf definitions at build time, so protoc has to be
       # present. Its own feature would build the compiler from source, but that needs cmake and a C++
       # toolchain and rebuilds protobuf on every clean build across every leg of this matrix.
+      #
+      # The version is install-action's numbering, which still follows protobuf's old 3.x scheme —
+      # `protoc@36.0` is rejected outright even though that is what the project calls its release.
       - uses: taiki-e/install-action@a2a5f6e99e1a31540baa0468acfa302cff0f359f # v2.86.4
         with:
-          tool: protoc@36.0
+          tool: protoc@3.35.1
       - run: cargo clippy --all-targets --all-features -- -D warnings
 
   test:
@@ -102,7 +105,7 @@ jobs:
       - uses: taiki-e/install-action@a2a5f6e99e1a31540baa0468acfa302cff0f359f # v2.86.4
         with:
           # One invocation for both, so protoc and the test runner are installed together.
-          tool: cargo-nextest,protoc@36.0
+          tool: cargo-nextest,protoc@3.35.1
       - run: cargo nextest run --all-features
       # nextest does not run doctests, and an example nobody executes is a claim rather than an example.
       - run: cargo test --doc --all-features
@@ -120,9 +123,12 @@ jobs:
       # The on-disk format generates code from protobuf definitions at build time, so protoc has to be
       # present. Its own feature would build the compiler from source, but that needs cmake and a C++
       # toolchain and rebuilds protobuf on every clean build across every leg of this matrix.
+      #
+      # The version is install-action's numbering, which still follows protobuf's old 3.x scheme —
+      # `protoc@36.0` is rejected outright even though that is what the project calls its release.
       - uses: taiki-e/install-action@a2a5f6e99e1a31540baa0468acfa302cff0f359f # v2.86.4
         with:
-          tool: protoc@36.0
+          tool: protoc@3.35.1
       # Warnings are denied through .cargo/config.toml, so a broken intra-doc link fails here too.
       - run: cargo doc --no-deps --all-features --workspace
 
