@@ -10,7 +10,8 @@ use std::sync::Arc;
 use arrow_array::{RecordBatch, RecordBatchIterator};
 use futures_util::TryStreamExt;
 
-use crate::{Compression, TableDefinition};
+use crate::crypto::{BlockSize, EncryptingProvider};
+use crate::{Compression, Keyring, TableDefinition};
 
 /// A cause from the layer below, kept as an opaque source.
 ///
@@ -52,6 +53,9 @@ pub trait TableStore {
 #[derive(Debug, Clone)]
 pub struct LanceStore {
     root: PathBuf,
+    /// Present when this store is encrypted. Carries the registry that resolves the encrypted URI
+    /// scheme, which is how every byte gets routed through the cipher.
+    session: Option<Arc<lance::session::Session>>,
 }
 
 impl LanceStore {
@@ -60,16 +64,42 @@ impl LanceStore {
     pub fn new(root: impl AsRef<Path>) -> Self {
         Self {
             root: root.as_ref().to_path_buf(),
+            session: None,
         }
+    }
+
+    /// Read and write this store's tables encrypted under the keyring's data key.
+    ///
+    /// Addresses the tables under a private URI scheme rather than as plain files, and that is the
+    /// mechanism rather than decoration: the format writes local files through a path that bypasses its
+    /// own object-store abstraction entirely, so only a scheme it does not recognise as local routes the
+    /// bytes through the cipher. `docs/adr/ADR-002-where-encryption-sits.md` § Amendment carries the
+    /// evidence and the cost.
+    ///
+    /// The block size is fixed at the default: it is part of the on-disk layout, so a per-table choice
+    /// would have to be persisted where a reader sees it before it can read anything.
+    #[must_use]
+    pub fn encrypted(mut self, keyring: &Keyring) -> Self {
+        let registry = EncryptingProvider::registry(keyring.frame(BlockSize::default()));
+        // Its own session, because the registry it carries holds this database's cipher. A shared one
+        // would hand one database's key to another.
+        self.session = Some(Arc::new(lance::session::Session::new(
+            lance::dataset::DEFAULT_INDEX_CACHE_SIZE,
+            lance::dataset::DEFAULT_METADATA_CACHE_SIZE,
+            registry,
+        )));
+        self
     }
 
     /// Where a table lives. Tables are separate datasets, so one can be dropped without rewriting
     /// the others.
     fn uri(&self, table: &str) -> String {
-        self.root
-            .join(format!("{table}.lance"))
-            .display()
-            .to_string()
+        let path = self.root.join(format!("{table}.lance"));
+        if self.session.is_some() {
+            EncryptingProvider::uri(&path)
+        } else {
+            path.display().to_string()
+        }
     }
 }
 
@@ -90,6 +120,7 @@ impl TableStore for LanceStore {
         let empty = RecordBatchIterator::new(std::iter::empty(), Arc::new(encoded));
         let params = lance::dataset::WriteParams {
             mode: lance::dataset::WriteMode::Create,
+            session: self.session.clone(),
             ..Default::default()
         };
         lance::Dataset::write(empty, self.uri(table).as_str(), Some(params))
@@ -103,6 +134,7 @@ impl TableStore for LanceStore {
         let batches = RecordBatchIterator::new(std::iter::once(Ok(batch.clone())), schema);
         let params = lance::dataset::WriteParams {
             mode: lance::dataset::WriteMode::Append,
+            session: self.session.clone(),
             ..Default::default()
         };
         lance::Dataset::write(batches, self.uri(table).as_str(), Some(params))
@@ -112,7 +144,15 @@ impl TableStore for LanceStore {
     }
 
     async fn scan(&self, table: &str) -> Result<Vec<RecordBatch>, StorageError> {
-        let dataset = lance::Dataset::open(self.uri(table).as_str())
+        // The builder rather than Dataset::open, because open uses the process-wide registry and would
+        // not know the encrypted scheme.
+        let mut builder =
+            lance::dataset::builder::DatasetBuilder::from_uri(self.uri(table).as_str());
+        if let Some(session) = self.session.clone() {
+            builder = builder.with_session(session);
+        }
+        let dataset = builder
+            .load()
             .await
             .map_err(|cause| StorageError::backend("open the table", table, cause))?;
         dataset

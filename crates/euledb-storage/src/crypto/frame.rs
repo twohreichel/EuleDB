@@ -269,10 +269,15 @@ impl BlockFrame {
 
     /// Open a whole object.
     ///
+    /// A convenience over [`Self::open_span`], which is what production reads through — every real read
+    /// is a range read, because that is the point of the framing. Kept for the tests, where asserting on
+    /// a whole round trip is what makes a boundary length or a flipped bit legible.
+    ///
     /// # Errors
     ///
     /// Fails closed on anything unexpected, and **returns no plaintext at all** when any block fails —
     /// a partial answer from an authenticated format would be worse than none.
+    #[cfg(test)]
     pub(crate) fn open(&self, ciphertext: &[u8]) -> Result<Vec<u8>, FrameError> {
         let plaintext_len = self.plaintext_len(ciphertext.len() as u64)?;
         self.read_header(ciphertext)?;
