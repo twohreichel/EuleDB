@@ -37,8 +37,8 @@ just format && just lint && just test && just qa
 ```
 
 Behind those targets: `cargo fmt`, `cargo clippy --all-targets --all-features -D warnings`,
-`cargo nextest run`, `cargo deny check`. CI runs the same thing on Linux x86_64, macOS arm64 and Linux
-aarch64, against both the pinned MSRV and stable. There is no way to merge past a red gate.
+`cargo nextest run`, `cargo deny check`. CI runs the same thing on Linux x86_64, Linux aarch64, macOS arm64
+and Windows x86_64, against both the pinned MSRV and stable. There is no way to merge past a red gate.
 
 `unsafe` is forbidden at crate roots. If you genuinely need it in an index hot path, it goes in an
 inventoried module with its invariant written down.
