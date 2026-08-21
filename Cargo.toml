@@ -40,6 +40,12 @@ argon2 = "0.5"
 # 32 random bytes from the operating system, and nothing more. The full rand stack would be a
 # generator, a seeding strategy and a distribution API for one call that must not be reproducible.
 getrandom = "0.3"
+# Pinned to what the on-disk format uses, for the same reason arrow is: the encrypting layer implements
+# this crate's ObjectStore trait and hands the result back to the format, so two versions would be two
+# incompatible traits rather than a duplicate.
+async-trait = "0.1"
+bytes = "1"
+object_store = "0.13"
 arrow-array = "58"
 # The on-disk format, pinned exactly (ADR-001). default-features = false is load-bearing, not tidiness:
 # lance enables aws, azure, gcp, oss, tencent, tos, goosefs, huggingface and geo by default — every

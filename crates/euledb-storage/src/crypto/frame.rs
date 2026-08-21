@@ -167,6 +167,56 @@ impl BlockFrame {
         start..end.max(start)
     }
 
+    /// The plaintext bytes per block.
+    pub(crate) const fn block_size(&self) -> usize {
+        self.block_size.get()
+    }
+
+    /// The header every sealed object starts with.
+    ///
+    /// Exposed for the streaming writer, which emits the header before it has seen any data.
+    pub(crate) fn header(&self) -> [u8; HEADER_LEN] {
+        let mut header = [0_u8; HEADER_LEN];
+        header[..4].copy_from_slice(&MAGIC);
+        header[4] = VERSION;
+        // The block size is bounded by BlockSize::new, so this conversion cannot fail.
+        header[5..].copy_from_slice(&(self.block_size.get() as u32).to_le_bytes());
+        header
+    }
+
+    /// Seal one block at a known index.
+    ///
+    /// Exposed for the streaming writer, which cannot hand over a whole object because it does not have
+    /// one — it learns the length only when the upload completes.
+    ///
+    /// # Errors
+    ///
+    /// [`FrameError::Random`] if the platform's random source fails, [`FrameError::Cipher`] if sealing
+    /// does.
+    pub(crate) fn seal_block(
+        &self,
+        plaintext: &[u8],
+        index: u64,
+        final_block: bool,
+    ) -> Result<Vec<u8>, FrameError> {
+        let mut nonce = [0_u8; NONCE_LEN];
+        getrandom::fill(&mut nonce).map_err(|_| FrameError::Random)?;
+        let sealed = self
+            .cipher()?
+            .encrypt(
+                &Nonce::<Aes256Gcm>::from(nonce),
+                Payload {
+                    msg: plaintext,
+                    aad: &Self::associated_data(index, final_block),
+                },
+            )
+            .map_err(|_| FrameError::Cipher)?;
+        let mut out = Vec::with_capacity(NONCE_LEN + sealed.len());
+        out.extend_from_slice(&nonce);
+        out.extend_from_slice(&sealed);
+        Ok(out)
+    }
+
     /// Seal a whole object.
     ///
     /// # Errors
@@ -195,7 +245,7 @@ impl BlockFrame {
         // lengths that are multiples of the block size, and those are the common case.
         let blocks = self.block_size.get();
         let mut chunks: Vec<&[u8]> = plaintext.chunks(blocks).collect();
-        if plaintext.len() % blocks == 0 {
+        if plaintext.len().is_multiple_of(blocks) {
             chunks.push(&[]);
         }
         let last = chunks.len() - 1;
@@ -252,7 +302,7 @@ impl BlockFrame {
         let cipher = self.cipher()?;
         let stride = self.sealed_block_len();
         let header = HEADER_LEN as u64;
-        if span.start < header || (span.start - header) % stride as u64 != 0 {
+        if span.start < header || !(span.start - header).is_multiple_of(stride as u64) {
             return Err(FrameError::Truncated);
         }
         let first_block = (span.start - header) / stride as u64;
