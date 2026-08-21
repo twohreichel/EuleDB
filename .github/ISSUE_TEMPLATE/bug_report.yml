@@ -57,7 +57,7 @@ body:
         - macOS (Apple Silicon)
         - macOS (Intel)
         - Linux x86_64
-        - Linux aarch64 (Raspberry Pi 5 or similar)
+        - Linux aarch64
         - Windows
         - Other
     validations:
