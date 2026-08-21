@@ -178,3 +178,71 @@ fn the_test_matrix_covers_exactly_the_platforms_the_guide_claims() {
         );
     }
 }
+
+/// The crate allowed to know the on-disk format. Everything else must not name it.
+const STORAGE_CRATE: &str = "euledb-storage";
+
+/// The dependency the trait boundary exists to contain.
+const ON_DISK_FORMAT: &str = "lance";
+
+/// Whether a line names the format as a Rust path, a manifest key or an import.
+///
+/// Deliberately not a bare substring search: `balance` and `glance` are ordinary words, and a check
+/// that fires on them would be turned off within a week.
+fn names_the_format(line: &str) -> bool {
+    [
+        format!("{ON_DISK_FORMAT}::"),
+        format!("use {ON_DISK_FORMAT}"),
+        format!("{ON_DISK_FORMAT} ="),
+        format!("{ON_DISK_FORMAT}.workspace"),
+        format!("extern crate {ON_DISK_FORMAT}"),
+    ]
+    .iter()
+    .any(|needle| line.contains(needle.as_str()))
+}
+
+#[test]
+fn no_crate_outside_the_storage_layer_names_the_on_disk_format() {
+    let mut leaks = Vec::new();
+
+    for dir in member_crate_dirs() {
+        if dir.file_name().and_then(|name| name.to_str()) == Some(STORAGE_CRATE) {
+            continue;
+        }
+        // Sources and the manifest. A crate that does not declare the dependency cannot use it, so
+        // checking the manifest catches the leak one step earlier than checking the code.
+        let mut files = vec![dir.join("Cargo.toml")];
+        let src = dir.join("src");
+        if src.is_dir() {
+            files.extend(
+                fs::read_dir(&src)
+                    .expect("a crate's src/ directory is readable")
+                    .filter_map(Result::ok)
+                    .map(|entry| entry.path())
+                    .filter(|path| path.extension().is_some_and(|ext| ext == "rs")),
+            );
+        }
+        for file in files {
+            let Ok(source) = fs::read_to_string(&file) else {
+                continue;
+            };
+            for (number, line) in source.lines().enumerate() {
+                if names_the_format(line) {
+                    leaks.push(format!(
+                        "{}:{}: {}",
+                        file.display(),
+                        number + 1,
+                        line.trim()
+                    ));
+                }
+            }
+        }
+    }
+
+    assert!(
+        leaks.is_empty(),
+        "the on-disk format is named outside `{STORAGE_CRATE}`, which makes a pinned, replaceable \
+         dependency permanent:\n  {}",
+        leaks.join("\n  "),
+    );
+}
