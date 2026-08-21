@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use arrow_array::{ArrayRef, Int64Array, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema};
-use euledb_storage::{LanceStore, TableSchema, TableStore};
+use euledb_storage::{LanceStore, TableDefinition, TableSchema, TableStore};
 
 /// The shape of a document table, matching the schema tests.
 fn documents() -> TableSchema {
@@ -46,7 +46,7 @@ async fn rows_survive_a_drop_and_reopen_unchanged() {
     {
         let store = LanceStore::new(root.path());
         store
-            .create_table("documents", &documents())
+            .create_table("documents", &TableDefinition::new(documents()))
             .await
             .expect("creating a table in an empty directory must succeed");
         store
@@ -88,7 +88,7 @@ async fn a_second_append_adds_to_the_first_instead_of_replacing_it() {
     let root = tempfile::tempdir().expect("a temporary directory is available");
     let store = LanceStore::new(root.path());
     store
-        .create_table("documents", &documents())
+        .create_table("documents", &TableDefinition::new(documents()))
         .await
         .expect("creating a table in an empty directory must succeed");
 

@@ -5,11 +5,12 @@
 //! permanent (ADR-001).
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use arrow_array::{RecordBatch, RecordBatchIterator};
 use futures_util::TryStreamExt;
 
-use crate::TableSchema;
+use crate::{Compression, TableDefinition};
 
 /// A cause from the layer below, kept as an opaque source.
 ///
@@ -27,7 +28,7 @@ pub trait TableStore {
     fn create_table(
         &self,
         table: &str,
-        schema: &TableSchema,
+        definition: &TableDefinition,
     ) -> impl Future<Output = Result<(), StorageError>> + Send;
 
     /// Append a batch to an existing table.
@@ -73,11 +74,20 @@ impl LanceStore {
 }
 
 impl TableStore for LanceStore {
-    async fn create_table(&self, table: &str, schema: &TableSchema) -> Result<(), StorageError> {
+    async fn create_table(
+        &self,
+        table: &str,
+        definition: &TableDefinition,
+    ) -> Result<(), StorageError> {
+        // The compression travels as field metadata on the schema, so it is persisted with the table
+        // rather than having to be supplied again on every write.
+        let encoded = definition
+            .compression()
+            .applied_to(definition.schema().declared());
         // An empty batch iterator carrying the schema. The declaration is what is being persisted
         // here — a table with no rows still has a shape, and that shape is what a later append is
         // checked against.
-        let empty = RecordBatchIterator::new(std::iter::empty(), schema.declared().clone());
+        let empty = RecordBatchIterator::new(std::iter::empty(), Arc::new(encoded));
         let params = lance::dataset::WriteParams {
             mode: lance::dataset::WriteMode::Create,
             ..Default::default()
@@ -110,9 +120,17 @@ impl TableStore for LanceStore {
             .try_into_stream()
             .await
             .map_err(|cause| StorageError::backend("start a scan of the table", table, cause))?
-            .try_collect()
+            .try_collect::<Vec<RecordBatch>>()
             .await
-            .map_err(|cause| StorageError::backend("read the table", table, cause))
+            .map_err(|cause| StorageError::backend("read the table", table, cause))?
+            .into_iter()
+            .map(|batch| {
+                // Hand back the caller's schema, not the one carrying this crate's encoding keys.
+                let schema = Arc::new(Compression::stripped_from(batch.schema_ref()));
+                RecordBatch::try_new(schema, batch.columns().to_vec())
+                    .map_err(|cause| StorageError::backend("read the table", table, cause))
+            })
+            .collect()
     }
 }
 

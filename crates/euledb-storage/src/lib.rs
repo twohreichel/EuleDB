@@ -6,8 +6,12 @@
 //! from it. That boundary is the point of the crate: the format is a pinned, replaceable dependency,
 //! and a leaked type would quietly make it permanent.
 
+mod compression;
+mod definition;
 mod schema;
 mod store;
 
+pub use compression::{Compression, InvalidZstdLevel, ZstdLevel};
+pub use definition::TableDefinition;
 pub use schema::{SchemaMismatch, TableSchema};
 pub use store::{LanceStore, StorageError, TableStore};
