@@ -17,9 +17,28 @@ keywords = ["database", "embedded", "hybrid-search", "vector-search", "local-fir
 # The interchange contract. arrow-schema and arrow-array rather than the `arrow` facade: the storage
 # layer needs the schema types and RecordBatch, not the compute kernels, the CSV reader or the FFI
 # layer. A consumer using the facade gets the same types, because the facade re-exports these.
-arrow-array = "59"
-arrow-schema = "59"
+#
+# The version is NOT ours to choose — it is whatever `lance` below depends on, currently 58. Two arrow
+# majors in one tree are two incompatible type worlds: a RecordBatch built against 59 cannot be handed
+# to a lance that was built against 58, and the mismatch surfaces as a type error, not as a warning.
+# The exact pin on lance is what keeps this alignment from drifting under a patch release.
+arrow-array = "58"
+# The on-disk format, pinned exactly (ADR-001). default-features = false is load-bearing, not tidiness:
+# lance enables aws, azure, gcp, oss, tencent, tos, goosefs, huggingface and geo by default — every
+# cloud object-store backend there is. This database's entire premise is that nothing leaves the
+# machine, and its resident-memory ceiling is 50 MB idle, so linking a fleet of cloud SDKs and an HTTP
+# stack in would contradict both.
+# lance generates code from protobuf definitions at build time, so `protoc` has to be on PATH. Its
+# `protoc` feature would build the compiler from source instead — but that needs cmake and a C++
+# toolchain, and rebuilds protobuf on every clean build across eight CI legs. Requiring the small
+# prebuilt binary and installing a pinned one in CI is the cheaper trade. CONTRIBUTING.md says so.
+lance = { version = "=10.0.0", default-features = false }
+arrow-schema = "58"
+# TryStreamExt, to collect a scan. Already in the tree through lance, so this adds nothing.
+futures-util = { version = "0.3", default-features = false }
+tempfile = "3"
 thiserror = "2"
+tokio = { version = "1", default-features = false }
 toml = "0.9"
 
 [workspace.lints.clippy]
