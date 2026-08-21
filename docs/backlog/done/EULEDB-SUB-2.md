@@ -7,7 +7,8 @@ size: M
 context_budget: 3000
 safety: additive, no public API yet
 detail: full
-status: in-progress
+status: done
+pr: https://github.com/twohreichel/EuleDB/pull/2
 ---
 
 ## Goal
@@ -110,9 +111,9 @@ mv crates/euledb-storage/Cargo.toml.bak crates/euledb-storage/Cargo.toml
 
 ## Definition of Done
 
-- [ ] AC-1 covered: `#![forbid(unsafe_code)]` at every crate root, plus a tracked root `UNSAFE.md`
-- [ ] AC-65 covered: full metadata, `cargo publish --dry-run --workspace` passing
-- [ ] MSRV derived from the dependency manifests, pinned, and drift-guarded by a test
-- [ ] All four `just` targets exist and pass, on the MSRV toolchain and on stable
-- [ ] Every invariant test observed failing before it was made to pass
-- [ ] Commits follow Conventional Commits, grouped by concern
+- [x] AC-1 covered: `#![forbid(unsafe_code)]` at every crate root, plus a tracked root `UNSAFE.md`
+- [x] AC-65 covered: full metadata, `cargo publish --dry-run --workspace` passing
+- [x] MSRV derived from the dependency manifests, pinned, and drift-guarded by a test
+- [x] All four `just` targets exist and pass, on the MSRV toolchain and on stable
+- [x] Every invariant test observed failing before it was made to pass
+- [x] Commits follow Conventional Commits, grouped by concern
