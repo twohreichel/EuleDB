@@ -39,7 +39,12 @@ just format && just lint && just test && just qa
 Behind those targets: `cargo fmt`, `cargo clippy --all-targets --all-features -D warnings`,
 `cargo nextest run` plus the doctests, `cargo doc` with warnings denied, and `cargo publish --dry-run`.
 `just` picks the toolchain from `rust-toolchain.toml`, so a local run uses the same minimum supported
-Rust version the pipeline does. CI runs the same thing on Linux x86_64, Linux aarch64, macOS arm64
+Rust version the pipeline does.
+
+If you change anything under `.github/workflows/`, also run `just lint-workflows`. It needs
+[actionlint](https://github.com/rhysd/actionlint) and [zizmor](https://docs.zizmor.sh) on your `PATH`,
+which is why it is not part of `just lint` — the pipeline runs it on every change either way, so the
+enforcement does not depend on you having them installed. CI runs the same thing on Linux x86_64, Linux aarch64, macOS arm64
 and Windows x86_64, against both the pinned MSRV and stable. There is no way to merge past a red gate.
 
 `unsafe` is forbidden at crate roots, and the compiler enforces it. If you genuinely need it in an
