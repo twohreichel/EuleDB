@@ -1,0 +1,112 @@
+# Versioning, changelog and publication. The version number and CHANGELOG.md are derived from
+# Conventional Commits, never written by hand, and a release reaches the registry only from a tag that a
+# merged release pull request created.
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    name: release-please
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # The token lives in an environment rather than in the bare repository secret store, so the grant is
+    # visible in the settings and can carry its own protection rules.
+    environment: release
+    permissions:
+      contents: write # commit the version bump and CHANGELOG.md to the release branch
+      pull-requests: write # open and update the release pull request
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      sha: ${{ steps.release.outputs.sha }}
+    steps:
+      # The default GITHUB_TOKEN cannot be used here: a pull request it opens does not trigger
+      # workflows, so the release pull request's required checks would never run and branch protection
+      # would make it permanently unmergeable.
+      #
+      # Until the token exists this annotates the run and skips, rather than failing. A permanently red
+      # workflow on the default branch teaches everyone to ignore it, which is worse than a warning.
+      - name: Check for the release token
+        id: token
+        env:
+          TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::warning::RELEASE_PLEASE_TOKEN is not set, so no release pull request is being maintained and no version can be cut. Create a fine-grained personal access token with contents:write and pull-requests:write on this repository and add it to the 'release' environment as RELEASE_PLEASE_TOKEN."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        id: release
+        if: steps.token.outputs.configured == 'true'
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  # AC-13 requires the publish to run only after the quality and supply-chain gates passed on the very
+  # commit being released. Branch protection already makes that true by construction, since the release
+  # pull request goes through the same required checks as any other. This job proves it rather than
+  # assuming it, because "by construction" stops being true the moment someone relaxes a setting.
+  verify-gates:
+    name: verify-gates
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      checks: read # read the check runs of the released commit, which is this job's entire purpose
+      contents: read # resolve the commit the release points at
+    steps:
+      - name: Verify every check succeeded on the released commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          SHA: ${{ needs.release-please.outputs.sha }}
+        run: |
+          set -euo pipefail
+          echo "released commit: $SHA"
+          gh api "repos/${REPOSITORY}/commits/${SHA}/check-runs" --paginate \
+            --jq '.check_runs[] | "\(.conclusion // "pending")\t\(.name)"' | sort -u | tee results.txt
+          if [ ! -s results.txt ]; then
+            echo "::error::no check runs found for ${SHA}, so the gates cannot be shown to have passed"
+            exit 1
+          fi
+          if grep -qvE '^(success|neutral|skipped)\b' results.txt; then
+            echo "::error::a check on the released commit did not succeed"
+            exit 1
+          fi
+
+  publish:
+    name: publish
+    needs: [release-please, verify-gates]
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: crates-io
+    permissions:
+      id-token: write # mint the short-lived OIDC identity trusted publishing exchanges for a scoped registry token
+      contents: read # check out the tag being published
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+          persist-credentials: false
+      - uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+        id: auth
+      # No --allow-dirty here, unlike the local gate: this runs from a clean tag checkout, so the check
+      # is the strict one.
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: cargo publish --workspace --all-features
