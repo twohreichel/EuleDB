@@ -7,7 +7,8 @@ size: L
 context_budget: 3000
 safety: trait boundary keeps the on-disk format swappable
 detail: full
-status: in-progress
+status: done
+pr: https://github.com/twohreichel/EuleDB/pull/10
 ---
 
 ## Goal
@@ -135,11 +136,11 @@ grep -n 'lance = ' Cargo.toml     # ="=10.0.0", default-features = false
 
 ## Definition of Done
 
-- [ ] AC-16 covered: rows come back byte-identical after a drop and reopen, and a second append adds
-- [ ] AC-17 covered: trait boundary in place, format pinned exactly, and a test proves nothing outside
+- [x] AC-16 covered: rows come back byte-identical after a drop and reopen, and a second append adds
+- [x] AC-17 covered: trait boundary in place, format pinned exactly, and a test proves nothing outside
       the storage crate names it
-- [ ] Every test observed failing first, and every branch shown to be guarded by a mutation check
-- [ ] Arrow aligned to the version the format requires, with the reason recorded
-- [ ] Every supply-chain decision recorded with a reason and shown to be load-bearing
-- [ ] `protoc` documented as a prerequisite and installed in every job that builds
-- [ ] Commits follow Conventional Commits, grouped by concern
+- [x] Every test observed failing first, and every branch shown to be guarded by a mutation check
+- [x] Arrow aligned to the version the format requires, with the reason recorded
+- [x] Every supply-chain decision recorded with a reason and shown to be load-bearing
+- [x] `protoc` documented as a prerequisite and installed in every job that builds
+- [x] Commits follow Conventional Commits, grouped by concern
