@@ -33,6 +33,13 @@ debug = "line-tables-only"
 # majors in one tree are two incompatible type worlds: a RecordBatch built against 59 cannot be handed
 # to a lance that was built against 58, and the mismatch surfaces as a type error, not as a warning.
 # The exact pin on lance is what keeps this alignment from drifting under a patch release.
+# Envelope encryption (ADR-002). RustCrypto throughout: aes-gcm carries an NCC Group audit with no
+# significant findings, and argon2 is the reference implementation of the variant the RFC recommends.
+aes-gcm = "0.11"
+argon2 = "0.5"
+# 32 random bytes from the operating system, and nothing more. The full rand stack would be a
+# generator, a seeding strategy and a distribution API for one call that must not be reproducible.
+getrandom = "0.3"
 arrow-array = "58"
 # The on-disk format, pinned exactly (ADR-001). default-features = false is load-bearing, not tidiness:
 # lance enables aws, azure, gcp, oss, tencent, tos, goosefs, huggingface and geo by default — every
@@ -49,6 +56,8 @@ arrow-schema = "58"
 futures-util = { version = "0.3", default-features = false }
 tempfile = "3"
 thiserror = "2"
+# Key material must not linger in freed memory, where a core dump or a swap file would reach it.
+zeroize = { version = "1", features = ["derive"] }
 tokio = { version = "1", default-features = false }
 toml = "0.9"
 
