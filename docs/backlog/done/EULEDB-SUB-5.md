@@ -7,7 +7,8 @@ size: M
 context_budget: 3000
 safety: CI only
 detail: full
-status: in-progress
+status: done
+pr: https://github.com/twohreichel/EuleDB/pull/5
 ---
 
 ## Goal
@@ -102,8 +103,8 @@ just format && just lint && just test && just qa
 
 ## Definition of Done
 
-- [ ] AC-9 covered: every property present in both workflows AND enforced by tooling in the gate
-- [ ] `actionlint` and `zizmor` run in the pipeline and block a merge on a finding
-- [ ] actionlint installed by digest, not by trusting a tag
-- [ ] `just lint-workflows` documented in `CONTRIBUTING.md` with both links verified
-- [ ] Commits follow Conventional Commits, grouped by concern
+- [x] AC-9 covered: every property present in both workflows AND enforced by tooling in the gate
+- [x] `actionlint` and `zizmor` run in the pipeline and block a merge on a finding
+- [x] actionlint installed by digest, not by trusting a tag
+- [x] `just lint-workflows` documented in `CONTRIBUTING.md` with both links verified
+- [x] Commits follow Conventional Commits, grouped by concern
