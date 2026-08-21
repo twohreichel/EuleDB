@@ -61,10 +61,11 @@ supply-chain:
 publish-check:
     cargo publish --dry-run --workspace --all-features --allow-dirty
 
-# Lint the GitHub Actions workflows. Needs actionlint and zizmor on PATH.
+# Lint the GitHub Actions workflows and the Dependabot policy. Needs actionlint and zizmor on PATH.
 lint-workflows:
     actionlint -color
     zizmor --persona=auditor .github/workflows/
+    python3 scripts/check-dependabot.py
 
 # Everything the gate covers, in the order a contributor should run it.
 all: format lint test qa
