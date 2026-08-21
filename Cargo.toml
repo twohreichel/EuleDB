@@ -14,6 +14,12 @@ categories = ["database-implementations", "database"]
 keywords = ["database", "embedded", "hybrid-search", "vector-search", "local-first"]
 
 [workspace.dependencies]
+# The interchange contract. arrow-schema and arrow-array rather than the `arrow` facade: the storage
+# layer needs the schema types and RecordBatch, not the compute kernels, the CSV reader or the FFI
+# layer. A consumer using the facade gets the same types, because the facade re-exports these.
+arrow-array = "59"
+arrow-schema = "59"
+thiserror = "2"
 toml = "0.9"
 
 [workspace.lints.clippy]
