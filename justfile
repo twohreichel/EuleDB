@@ -20,6 +20,10 @@
 # the publish check, and one about the repository-invariant test being excluded from the published
 # package — it reads files above the package root, so it could not pass from a published crate.
 #
+# `lint-workflows` is deliberately NOT part of `lint`. It needs two binaries that have nothing to do
+# with Rust, and failing a Rust contributor's gate with "command not found" would be worse than useless.
+# The pipeline runs it on every change regardless, so the enforcement does not depend on remembering it.
+#
 # - No recipe uses shell-specific syntax. RUSTDOCFLAGS lives in .cargo/config.toml rather than being
 #   prefixed onto a recipe, because `VAR=x cmd` is not valid on cmd.exe and Windows is supported.
 
@@ -56,6 +60,11 @@ supply-chain:
 # Prove every crate is publishable, rather than letting a release tag discover it is not.
 publish-check:
     cargo publish --dry-run --workspace --all-features --allow-dirty
+
+# Lint the GitHub Actions workflows. Needs actionlint and zizmor on PATH.
+lint-workflows:
+    actionlint -color
+    zizmor --persona=auditor .github/workflows/
 
 # Everything the gate covers, in the order a contributor should run it.
 all: format lint test qa
