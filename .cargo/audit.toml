@@ -1,0 +1,10 @@
+# cargo-audit's half of the supply-chain gate. The same advisory has to be judged in both tools,
+# because they read different trees: cargo-deny evaluates normal and build dependencies, cargo-audit
+# reads Cargo.lock and therefore also the dev tree. The duplicated id is the honest cost of that
+# coverage, not an oversight — deny.toml carries the same entry with the same reason.
+[advisories]
+# RUSTSEC-2024-0436 says `paste` is unmaintained, which is true and is not a vulnerability: it is a
+# proc-macro crate its author considers finished. Proc macros run at build time and their code is not
+# linked into the artifact, and it arrives transitively under the on-disk format rather than by our
+# choice. A real advisory against it would carry a different id and would therefore still stop the build.
+ignore = ["RUSTSEC-2024-0436"]
