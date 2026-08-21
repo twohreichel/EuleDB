@@ -13,6 +13,17 @@ repository = "https://github.com/twohreichel/EuleDB"
 categories = ["database-implementations", "database"]
 keywords = ["database", "embedded", "hybrid-search", "vector-search", "local-first"]
 
+# Line tables instead of full DWARF. The dependency tree is 477 crates including datafusion, and full
+# debug info for that is several gigabytes of disk and a matching peak in memory during linking — enough
+# that the aarch64 CI runners, which have less of both than the x86_64 ones, were killed mid-build.
+# Line tables still give file and line in a backtrace, which is what a test failure needs. Override
+# locally if you need a step debugger.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.test]
+debug = "line-tables-only"
+
 [workspace.dependencies]
 # The interchange contract. arrow-schema and arrow-array rather than the `arrow` facade: the storage
 # layer needs the schema types and RecordBatch, not the compute kernels, the CSV reader or the FFI

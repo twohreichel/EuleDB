@@ -102,6 +102,21 @@ jobs:
             rustup toolchain install stable --profile minimal --component clippy --component rustfmt
             echo "RUSTUP_TOOLCHAIN=stable" >> "$GITHUB_ENV"
           fi
+      # Deferred when the tree was 18 crates, justified now that it is 477 including datafusion. Beyond
+      # saving time it lowers the peak: a cached build compiles a handful of crates instead of hundreds,
+      # and the aarch64 runners — which have less disk and memory than the x86_64 ones — were being
+      # killed mid-build with SIGTERM before this was added.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # One cache per platform and toolchain. Sharing one across them thrashes and helps nobody.
+          shared-key: ${{ matrix.platform.name }}-${{ matrix.toolchain }}
+      # So the next failure is read rather than guessed at. A build killed with SIGTERM says nothing
+      # about which resource ran out, and this run cost two rounds of speculation to identify.
+      - name: Report available disk and memory
+        shell: bash
+        run: |
+          df -h . || true
+          free -h 2>/dev/null || vm_stat 2>/dev/null || true
       - uses: taiki-e/install-action@a2a5f6e99e1a31540baa0468acfa302cff0f359f # v2.86.4
         with:
           # One invocation for both, so protoc and the test runner are installed together.
