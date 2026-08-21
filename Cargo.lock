@@ -1690,10 +1690,12 @@ dependencies = [
  "futures-util",
  "getrandom 0.3.4",
  "lance",
+ "lance-io",
  "object_store",
  "tempfile",
  "thiserror",
  "tokio",
+ "url",
  "zeroize",
 ]
 
