@@ -7,7 +7,8 @@ size: M
 context_budget: 3000
 safety: per-table option, existing tables unaffected
 detail: full
-status: in-progress
+status: done
+pr: https://github.com/twohreichel/EuleDB/pull/11
 ---
 
 ## Goal
@@ -129,10 +130,10 @@ cargo run --release --example measure_encoding -p euledb-storage
 
 ## Definition of Done
 
-- [ ] AC-18 covered: zstd applied, level configurable per table at creation, and both facts tested
-- [ ] AC-19 covered: the format's string encoding measured, the finding documented on the crate's
+- [x] AC-18 covered: zstd applied, level configurable per table at creation, and both facts tested
+- [x] AC-19 covered: the format's string encoding measured, the finding documented on the crate's
       registry page, and no own encoder written
-- [ ] Every test observed failing first, and every gap the mutation check found closed
-- [ ] The measurement is reproducible by one documented command
-- [ ] Rows still come back unchanged, with the storage configuration stripped from the caller's schema
-- [ ] Commits follow Conventional Commits, grouped by concern
+- [x] Every test observed failing first, and every gap the mutation check found closed
+- [x] The measurement is reproducible by one documented command
+- [x] Rows still come back unchanged, with the storage configuration stripped from the caller's schema
+- [x] Commits follow Conventional Commits, grouped by concern
