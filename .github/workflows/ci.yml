@@ -1,0 +1,137 @@
+# The quality gate, as four separately reported jobs. It runs the same commands the justfile does, so a
+# green local run and a green pipeline mean the same thing.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# No token unless a job asks for one. Every job below grants itself contents:read and nothing more.
+permissions: {}
+
+# A new push supersedes the previous run on a pull request. On main every commit is verified, because a
+# cancelled run on the default branch would leave a commit unverified.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+
+jobs:
+  format:
+    name: format
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # No toolchain step: rust-toolchain.toml pins the channel and lists rustfmt and clippy, so
+      # rustup installs both on the first cargo invocation.
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: clippy (${{ matrix.toolchain }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # Lint on one platform but both toolchains: clippy gains and changes lints between releases,
+        # which is what breaks a build, far more often than a target triple is.
+        toolchain: [msrv, stable]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select the toolchain
+        shell: bash
+        env:
+          TOOLCHAIN: ${{ matrix.toolchain }}
+        run: |
+          if [ "$TOOLCHAIN" = stable ]; then
+            rustup toolchain install stable --profile minimal --component clippy --component rustfmt
+            echo "RUSTUP_TOOLCHAIN=stable" >> "$GITHUB_ENV"
+          fi
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+
+  test:
+    name: test (${{ matrix.platform.name }}, ${{ matrix.toolchain }})
+    runs-on: ${{ matrix.platform.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # Exactly the platforms the documentation claims. A platform absent here is a platform this
+        # project does not support, and saying otherwise anywhere would be a false claim.
+        platform:
+          - { name: linux-x86_64, runner: ubuntu-24.04 }
+          - { name: linux-aarch64, runner: ubuntu-24.04-arm }
+          - { name: macos-arm64, runner: macos-15 }
+          - { name: windows-x86_64, runner: windows-2025 }
+        toolchain: [msrv, stable]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select the toolchain
+        shell: bash
+        env:
+          TOOLCHAIN: ${{ matrix.toolchain }}
+        run: |
+          if [ "$TOOLCHAIN" = stable ]; then
+            rustup toolchain install stable --profile minimal --component clippy --component rustfmt
+            echo "RUSTUP_TOOLCHAIN=stable" >> "$GITHUB_ENV"
+          fi
+      - uses: taiki-e/install-action@a2a5f6e99e1a31540baa0468acfa302cff0f359f # v2.86.4
+        with:
+          tool: cargo-nextest
+      - run: cargo nextest run --all-features
+      # nextest does not run doctests, and an example nobody executes is a claim rather than an example.
+      - run: cargo test --doc --all-features
+
+  doc:
+    name: doc
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Warnings are denied through .cargo/config.toml, so a broken intra-doc link fails here too.
+      - run: cargo doc --no-deps --all-features --workspace
+
+  gate:
+    name: gate
+    needs: [format, clippy, test, doc]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      # One check that is red unless every job above succeeded. Branch protection can require this and
+      # stay correct when the matrix grows, which a hand-maintained list of matrix job names does not.
+      - name: Verify every job succeeded
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        shell: bash
+        run: |
+          echo "upstream results: $RESULTS"
+          for result in $RESULTS; do
+            if [ "$result" != success ]; then
+              echo "::error::a required job did not succeed"
+              exit 1
+            fi
+          done
