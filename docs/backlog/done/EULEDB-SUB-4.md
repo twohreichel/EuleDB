@@ -7,7 +7,8 @@ size: M
 context_budget: 3000
 safety: CI only
 detail: full
-status: in-progress
+status: done
+pr: https://github.com/twohreichel/EuleDB/pull/4
 ---
 
 ## Goal
@@ -102,8 +103,8 @@ git checkout crates/euledb-storage/Cargo.toml Cargo.lock
 
 ## Definition of Done
 
-- [ ] AC-8 covered: both tools, on pull requests, on `main`, and weekly
-- [ ] The licence gate observed failing when a licence in the tree is removed from the allow-list
-- [ ] `just qa` runs both tools locally with pristine output
-- [ ] The new job names added to the required status checks after the first run
-- [ ] Commits follow Conventional Commits, grouped by concern
+- [x] AC-8 covered: both tools, on pull requests, on `main`, and weekly
+- [x] The licence gate observed failing when a licence in the tree is removed from the allow-list
+- [x] `just qa` runs both tools locally with pristine output
+- [x] The new job names added to the required status checks after the first run
+- [x] Commits follow Conventional Commits, grouped by concern
