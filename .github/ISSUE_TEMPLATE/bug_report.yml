@@ -1,0 +1,92 @@
+name: Bug report
+description: Something behaves differently than documented or than the API promises.
+title: "fix: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time. The three things that make a bug fixable are a **version**, a
+        **platform** and a **reproduction** — the fields below ask for exactly those.
+
+        If this is a security vulnerability, close this form and
+        [report it privately](../../security/advisories/new) instead.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened
+      description: One or two sentences. What did you observe?
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+      description: >
+        Point at the documentation, doc-comment or README statement that says it should behave that way,
+        if there is one. That tells us immediately whether this is a bug or a missing feature.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: >
+        The smallest code, data and sequence of steps that shows the problem. A failing test is the
+        most useful form this can take.
+      render: rust
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: EuleDB version
+      description: Crate version, or the commit SHA if you built from source.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Linux x86_64
+        - Linux aarch64 (Raspberry Pi 5 or similar)
+        - Windows
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: rustc
+    attributes:
+      label: Rust version
+      description: Output of `rustc --version`.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs, backtrace or error output
+      description: >
+        Set `RUST_BACKTRACE=1` if it panicked. Redact anything sensitive — this issue is public.
+      render: shell
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: I am on the latest release, or I state above why I cannot be.
+          required: true
+        - label: This report contains no secret, credential or private data.
+          required: true

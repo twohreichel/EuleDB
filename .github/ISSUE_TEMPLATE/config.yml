@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or idea
+    url: https://github.com/twohreichel/EuleDB/discussions
+    about: Open a discussion for questions, ideas and design debate — issues are for actionable work.
+  - name: Security vulnerability
+    url: https://github.com/twohreichel/EuleDB/security/advisories/new
+    about: Report privately. Never open a public issue for a vulnerability.

@@ -1,0 +1,68 @@
+name: Feature request
+description: Propose a capability EuleDB does not have yet.
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        EuleDB has a deliberately narrow remit — embedded, local-first hybrid search. It is not a
+        server, not a general-purpose SQL engine and not a cloud service. Please check the README
+        first: some exclusions are deliberate decisions with a reason behind them, not oversights.
+
+        This form asks you to phrase the request as something that could be **verified**, because that
+        is what makes it buildable.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: >
+        What are you unable to do today? Describe the situation, not the solution — the best feature is
+        often not the one first imagined.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+      description: >
+        Phrase it so it could fail a test. The form used in the spec works well:
+        "WHEN <trigger> THE SYSTEM SHALL <observable behaviour>."
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: Including doing nothing, or solving it outside EuleDB.
+
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Which area does this touch?
+      description: Best guess is fine.
+      options:
+        - Storage, schema or encryption
+        - Indices and exact queries
+        - Semantic or full-text search, ranking
+        - Natural-language querying
+        - Multi-device sync
+        - User experience, Python bindings, packaging
+        - Not sure
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and discussions.
+          required: true
+        - label: I read the README and this is within what EuleDB sets out to do.
+          required: true
+        - label: I understand a maintainer decides whether and when this is built.
+          required: true
