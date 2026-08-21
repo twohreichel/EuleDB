@@ -7,7 +7,8 @@ size: S
 context_budget: 3000
 safety: config only
 detail: full
-status: in-progress
+status: done
+pr: https://github.com/twohreichel/EuleDB/pull/6
 ---
 
 ## Goal
@@ -91,8 +92,8 @@ just format && just lint && just test && just qa
 
 ## Definition of Done
 
-- [ ] AC-10 covered: both ecosystems, weekly, grouped patch and minor, ungrouped majors, cooldown set
-- [ ] No `ignore` entry and no auto-merge anywhere
-- [ ] The policy check runs in the pipeline and locally, and every one of its checks observed failing
-- [ ] The three referenced labels exist in the repository
-- [ ] Commits follow Conventional Commits, grouped by concern
+- [x] AC-10 covered: both ecosystems, weekly, grouped patch and minor, ungrouped majors, cooldown set
+- [x] No `ignore` entry and no auto-merge anywhere
+- [x] The policy check runs in the pipeline and locally, and every one of its checks observed failing
+- [x] The three referenced labels exist in the repository
+- [x] Commits follow Conventional Commits, grouped by concern
