@@ -150,6 +150,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: zizmor --persona=auditor .github/workflows/
+      # actionlint and zizmor do not look at dependabot.yml, and GitHub reports a broken one only in
+      # the dependency graph, where nobody looks until an update stops arriving. This checks the policy
+      # rather than the syntax: both ecosystems present, no `ignore` suppressing security updates, a
+      # cooldown set, and no group sweeping majors in with patches.
+      - name: Check the Dependabot policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -c 'import yaml' 2>/dev/null || python3 -m pip install --quiet 'pyyaml==6.0.3'
+          python3 scripts/check-dependabot.py
 
   gate:
     name: gate
