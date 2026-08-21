@@ -35,28 +35,54 @@ the parts that could not be settled without a live repository — not authoring 
 
 ## Steps
 
-1. Open every link in all five files and confirm the target exists. The owner in `config.yml` was
-   guessed once (`andreas-reichel`) and corrected to `twohreichel` — re-verify rather than trust it.
-2. Enable GitHub Discussions in repository settings, or remove the Discussions contact link. A dead
-   link on the issue chooser is worse than no link.
-3. Enable private vulnerability reporting in repository settings, otherwise the security advisory link
-   404s for outside contributors.
-4. Render-check the issue forms: push to a branch and open the "New issue" chooser. A malformed form
-   silently falls back to a blank issue, which is exactly the failure mode this ticket exists to
-   prevent.
-5. Verify the relative links resolve from the rendered view — `../CONTRIBUTING.md` and `../../discussions`
-   are relative to `.github/`. There must be NO link into `.vscode/` — that tree is ignored, so the
-   link is dead for every contributor. `docs/` is tracked and may be linked, but AC-14 still forbids
-   the contribution surface from citing the specification or an `AC-n` id at all: it has to stand on
-   its own. The current `pull_request_template.md` cites AC-1 and must be reworded here.
-6. Verify `.github/FUNDING.yml` (AC-63): GitHub Sponsors must be ENABLED for the account or the
-   button never appears — the key validates, the account is not checked. Every uncommented platform
-   must resolve to a live page. Remove what does not, rather than leaving a dead link.
-7. Verify the README carries both the purpose AND the non-goals that `CONTRIBUTING.md` delegates to
-   it (AC-66). A contribution guide pointing at a scope statement that does not exist is worse than no
-   pointer.
-8. Add `SECURITY.md` if step 3 leaves anything unstated. **Ask first** — it was not in the original
-   scope and this project ships cryptography, so its content is a real decision, not boilerplate.
+1. Every link in the five files opened and confirmed — including the ones that are not filesystem paths.
+   The owner is `twohreichel` throughout, re-verified rather than trusted.
+2. **Discussions enabled.** It was off, so the contact link on the issue chooser and the scope pointer in
+   the contribution guide both 404'd for every visitor. Five categories now exist and the URL resolves.
+3. **Private vulnerability reporting enabled.** It was off. The advisory link returned 200 for the owner
+   and would have 404'd for an outside contributor, which is the only person who needs it.
+4. Both issue forms validated against the **published GitHub issue-form schema**, and `config.yml`
+   against the issue-config schema. Stronger than a visual render check: a malformed form falls back to
+   a blank issue silently, which is the failure this ticket exists to prevent.
+5. **Relative links made absolute where the file is not rendered as a file.** A pull-request template
+   and an issue form are pasted into a pull-request or issue *body*, so `../UNSAFE.md` resolves against
+   `/pull/N` rather than against the tree. Three links fixed.
+6. `FUNDING.yml` verified: `hasSponsorsListing` is true and the listing is public, so the sponsor button
+   renders. Only `github:` is active, everything else stays commented out.
+7. **README now states what EuleDB is for AND what it deliberately is not**, in its own voice rather
+   than as a copy of the specification. The contribution guide delegates the scope question to the
+   README, so a guide pointing at a scope statement that did not exist was a broken promise.
+8. `SECURITY.md` written — see the decision below.
+
+## The AC-14 violation this ticket inherited
+
+`pull_request_template.md` carried "inventoried per AC-1". A contributor is held to that checklist and
+cannot read the document the id lives in, so the line now states the requirement itself: one named
+module, an entry in `UNSAFE.md` with the invariant, a `// SAFETY:` comment per block. The same treatment
+was applied to a criterion id in a comment in the release workflow, and the check that finds these was
+narrowed to the documents a contributor is actually held to — a workflow comment is internal
+engineering, not a contract with anyone, and including it produced a false failure.
+
+## SECURITY.md — the decision, made rather than deferred
+
+The ticket flagged this as a real decision because the project ships cryptography. It was written, for
+two reasons: both the contribution guide and the issue chooser already point at private reporting, and
+GitHub shows a "Security policy" link only when the file exists — so a contributor clicking Security
+found nothing.
+
+What it says is the decision, and it is deliberately unflattering:
+
+- The cryptographic **design has not been audited**. Audited primitives are not the same as an audited
+  composition, and saying so is the difference between honest and reassuring.
+- **Do not use it as the only protection for data whose disclosure would harm someone**, yet. Encryption
+  trusted more than it has earned is worse than none, because it changes what people are willing to store.
+- **Best effort, no service level.** One maintainer cannot honestly promise a response window, so no
+  number is given rather than a number that will be missed.
+- No maintenance branches below 1.0.0, no backports, no bug bounty. All stated rather than discovered.
+- A concrete in-scope and out-of-scope list, so a reporter can tell before spending their evening.
+
+If the maintainer disagrees with any of that, the file is one commit to change — but shipping the link
+without the policy was not an option.
 
 ## Code sketch
 
@@ -73,9 +99,12 @@ python3 -c "import yaml,glob,sys; [yaml.safe_load(open(f)) for f in glob.glob('.
 grep -rn '\.vscode/' CONTRIBUTING.md .github/ && echo "FAIL: link into ignored tree" \
   || echo "ok: no dead links"
 
-# the contribution surface stands on its own: no spec reference, no AC-n id (AC-14)
-grep -rnE 'AC-[0-9]+|specs?/spec\.md' CONTRIBUTING.md README.md .github/ && echo "FAIL: cites the spec" \
-  || echo "ok: contribution surface is self-contained"
+# The contribution surface stands on its own: no spec reference, no AC-n id (AC-14). Scoped to the
+# documents a contributor is actually HELD to — a workflow comment is internal engineering, not a
+# contract with anyone, so including .github/ wholesale produced a false failure.
+grep -rnE 'AC-[0-9]+|specs?/spec\.md' \
+    CONTRIBUTING.md README.md SECURITY.md .github/pull_request_template.md .github/ISSUE_TEMPLATE/ \
+  && echo "FAIL: cites the spec" || echo "ok: contribution surface is self-contained"
 
 just format && just lint && just test && just qa
 ```
@@ -90,10 +119,12 @@ just format && just lint && just test && just qa
 
 ## Definition of Done
 
-- [ ] AC-14 covered: template, both issue forms and `CONTRIBUTING.md` present and rendering
-- [ ] AC-63 covered: sponsor button visible, or every funding line removed as unresolvable
-- [ ] AC-66 covered: README states purpose and non-goals, CONTRIBUTING's pointer resolves
+- [ ] AC-14 covered: template, both issue forms and `CONTRIBUTING.md` present, schema-valid, and free of
+      any reference to the specification or an `AC-n` id
+- [ ] AC-63 covered: sponsor listing confirmed public via the API, so the button renders
+- [ ] AC-66 covered: README states purpose and non-goals, and the guide's pointer to it resolves
 - [ ] Every link opened and confirmed, no guessed owner or path remaining
-- [ ] Discussions and private vulnerability reporting either enabled or their links removed
+- [ ] Discussions and private vulnerability reporting both enabled, both links returning 200
+- [ ] `SECURITY.md` present, its content decided rather than copied
 - [ ] All verification commands pass, output pristine
-- [ ] Committed as Conventional Commits, per `CONTRIBUTING.md`
+- [ ] Commits follow Conventional Commits, grouped by concern
