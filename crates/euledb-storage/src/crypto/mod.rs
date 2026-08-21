@@ -11,6 +11,7 @@
 //! Nothing here encrypts table data. That is the data path, and it is deliberately a separate piece of
 //! work — see `docs/adr/ADR-002-where-encryption-sits.md`.
 
+mod frame;
 mod keyring;
 mod secret;
 
