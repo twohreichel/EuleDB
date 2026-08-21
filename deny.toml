@@ -64,7 +64,14 @@ multiple-versions = "deny"
 # A wildcard version constraint is not a constraint.
 wildcards = "deny"
 allow-wildcard-paths = true
-skip = []
+# Skips are per duplicate, with a reason, and only where the duplicate cannot ship. Adding one is a
+# decision recorded here — not a reason to loosen `multiple-versions` for everything.
+#
+# `syn` reaches this tree twice and both paths are proc-macro only: thiserror-impl uses syn 3,
+# zerocopy-derive (via ahash and half, under arrow-array) uses syn 2. Proc macros run at build time and
+# their code is not linked into the artifact, so the cost is compile time and nothing else — and neither
+# version is ours to choose.
+skip = [{ crate = "syn@2", reason = "proc-macro only, via zerocopy-derive under arrow-array. Not linked into the artifact and not ours to pick" }]
 deny = []
 
 [sources]
