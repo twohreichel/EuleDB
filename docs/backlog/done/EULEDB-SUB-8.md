@@ -119,12 +119,12 @@ just format && just lint && just test && just qa
 
 ## Definition of Done
 
-- [ ] AC-14 covered: template, both issue forms and `CONTRIBUTING.md` present, schema-valid, and free of
+- [x] AC-14 covered: template, both issue forms and `CONTRIBUTING.md` present, schema-valid, and free of
       any reference to the specification or an `AC-n` id
-- [ ] AC-63 covered: sponsor listing confirmed public via the API, so the button renders
-- [ ] AC-66 covered: README states purpose and non-goals, and the guide's pointer to it resolves
-- [ ] Every link opened and confirmed, no guessed owner or path remaining
-- [ ] Discussions and private vulnerability reporting both enabled, both links returning 200
-- [ ] `SECURITY.md` present, its content decided rather than copied
-- [ ] All verification commands pass, output pristine
-- [ ] Commits follow Conventional Commits, grouped by concern
+- [x] AC-63 covered: sponsor listing confirmed public via the API, so the button renders
+- [x] AC-66 covered: README states purpose and non-goals, and the guide's pointer to it resolves
+- [x] Every link opened and confirmed, no guessed owner or path remaining
+- [x] Discussions and private vulnerability reporting both enabled, both links returning 200
+- [x] `SECURITY.md` present, its content decided rather than copied
+- [x] All verification commands pass, output pristine
+- [x] Commits follow Conventional Commits, grouped by concern
