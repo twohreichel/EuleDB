@@ -7,5 +7,7 @@
 //! and a leaked type would quietly make it permanent.
 
 mod schema;
+mod store;
 
 pub use schema::{SchemaMismatch, TableSchema};
+pub use store::{LanceStore, StorageError, TableStore};
