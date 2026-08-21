@@ -162,3 +162,70 @@ the top with this amendment cited. Removing them would discard the part that is 
 would publish a claim that is false.
 
 `EULEDB-SUB-18` returns to the backlog with this design, rather than being closed.
+
+---
+
+## Amendment, part two — the correction works, and what it costs
+
+Implemented and measured. **Every object the format writes is now encrypted**, verified by reading the
+bytes off disk rather than by asserting it:
+
+```
+t.lance/data/0100110000000110…lance   1296073 bytes  framed=true
+t.lance/_versions/…4.manifest              454 bytes  framed=true
+t.lance/_versions/latest_version_hint.json  50 bytes  framed=true
+t.lance/_transactions/1-….txn              162 bytes  framed=true
+```
+
+The five tests that matter all pass, including the two that failed against the first attempt: a foreign
+keyring cannot read the table, and a plaintext table is refused rather than misread. The control test —
+the marker string **is** findable on disk without encryption — passes too, and it is what makes the
+others mean anything.
+
+### The manifest size question is answered
+
+It does not recur. The mismatch came from a **partially** bypassed store: the manifest went through the
+layer while its size was observed on the raw object, because the data path had gone around the layer
+entirely. With one consistent path there is one size, and it is the plaintext one throughout.
+
+That is worth stating as a rule rather than an anecdote: **a translating layer must be on every path or
+on none.** Half of one produces two truths about the same object, and the failure surfaces far from the
+cause.
+
+### The cost, measured
+
+Best of five runs, compression off so the numbers are about encryption alone:
+
+| Rows | Plaintext | Encrypted | Size overhead | Round trip |
+|---:|---:|---:|---:|---|
+| 20 000 | 1 296 685 | 1 297 439 | +0.06 % | 4.0 ms → 4.1 ms (1.01x) |
+| 200 000 | 13 150 838 | 13 156 660 | +0.04 % | 16.3 ms → 44.7 ms (2.75x) |
+| 1 000 000 | 66 191 545 | 66 220 017 | +0.04 % | 64.6 ms → 199.6 ms (3.09x) |
+
+**Size overhead is negligible** — 28 bytes per 64 KiB block is 0.043 %, and the measurement matches.
+
+**Time is roughly 3x on a write-plus-read round trip at scale**, and that is the honest headline. It
+bundles two things this measurement cannot separate: the AES-GCM work itself, and the loss of the
+format's local fast path. A reasoned estimate, offered as an estimate: 66 MB written and read again is
+132 MB through the cipher, which at AES-NI speeds is a large share of the 135 ms difference — so most of
+it is likely inherent to encrypting the data rather than an artefact of the mechanism. Separating them
+would need a knob that exists only to be measured, which is why it has not been added.
+
+### One further finding: the read path was not validating the header
+
+The first working version translated sizes and decrypted blocks without ever looking at the header. It
+*worked* — a plaintext object still failed, on the authentication tag — but the diagnosis was "block 0
+did not authenticate" rather than "this object is not encrypted by EuleDB". Three error variants were
+unreachable, which is how the compiler's dead-code warning found it.
+
+Every read now fetches the header alongside the block span in one `get_ranges` call and validates it.
+That is the difference between a diagnosis and a shrug, and it costs no extra round trip.
+
+### Left open, deliberately
+
+**The block size is not configurable, and the measurement that would justify a different default has not
+been taken.** Taking it end to end requires making the size settable, which requires deciding whether a
+reader *adopts* the size declared in an object's header or *refuses* a mismatch. That is a configuration
+decision and belongs with AC-74's single mechanism, not here. The current default of 64 KiB is defensible
+on the numbers already in hand: overhead at that size is 0.04 %, a 4 KiB block would raise it to roughly
+0.7 %, and a larger block amplifies every small read.

@@ -5,9 +5,9 @@ fulfils: [AC-22, AC-75]
 depends_on: [EULEDB-SUB-12]
 size: L
 context_budget: 3000
-safety: NOT SHIPPED — the mechanism does not reach the data files, see below
+safety: opt-in — a store without a keyring behaves exactly as before
 detail: full
-status: blocked
+status: in-progress
 ---
 
 ## Goal
@@ -16,76 +16,115 @@ Encrypted data path. Every byte of table data at rest under AES-256-GCM with the
 AC-20, in independently addressable blocks so a range read does not decrypt the whole file, and failing
 closed on a failed authentication tag with no partial plaintext.
 
-## Status: blocked, and why
+## Context (read ONLY these files)
 
-**The mechanism ADR-002 chose does not reach the data files on a local filesystem**, which is the only
-platform this project targets. `lance_io::object_store::ObjectStore::create` dispatches on the URI
-scheme and the `"file"` branch writes through `tokio::fs` with a `LocalWriter`, never touching the
-`object_store` trait. A wrapper installed on that store is simply not on the path.
+- `docs/adr/ADR-002-where-encryption-sits.md` — the design AND both amendments
+- `crates/euledb-storage/src/crypto/{frame,store,provider}.rs`
+- `crates/euledb-storage/src/store.rs`
+- `crates/euledb-storage/tests/encrypted.rs`
+- `docs/specs/spec.md` (AC-22, AC-75)
+
+## The first mechanism was wrong, and the tests said so
+
+ADR-002 chose the format's `object_store_wrapper` hook. **It is not on the path a local data file takes.**
+`lance_io::object_store::ObjectStore::create` dispatches on the URI scheme and the `"file"` branch writes
+through `tokio::fs` without touching the `object_store` trait.
 
 Measured with the wrapper installed and every call logged: it was consulted for `list` and for the
-manifest `put`, **no data-file write reached it**, and the data file on disk began with no framing magic
-and carried the row text in the clear. The test that caught it: opening with a *different* keyring
-returned **2000 rows successfully**.
+manifest `put`, **no data-file write reached it**, and the data file carried the row text in the clear.
+The test that caught it: opening with a *different* keyring returned **2000 rows successfully**.
 
-Nothing was shipped as a result. The evidence, the two secondary findings and the corrected mechanism
-are in `docs/adr/ADR-002-where-encryption-sits.md` § Amendment.
+## The mechanism that works
 
-## What is done, and correct
+**A provider registered for a private URI scheme.** Under a scheme that is not `file`, `is_local()` is
+false, `create` takes the `ObjectWriter` branch, and every byte goes through the trait.
 
-`crates/euledb-storage/src/crypto/frame.rs` — the block framing. Complete, 36 tests, every mutation
-caught, and it is the part the corrected mechanism reuses unchanged:
+- `EncryptingProvider` implements `ObjectStoreProvider` for scheme `euledb`, returning a
+  `lance_io::ObjectStore` built on `EncryptingObjectStore` over `LocalFileSystem`.
+- Its own `ObjectStoreRegistry` in its own `Session`, not the process-wide default: the registry carries
+  this database's cipher, and a shared one would hand one database's key to another.
+- `LanceStore::encrypted(&keyring)` switches the URIs to that scheme and threads the session through
+  both the write path (`WriteParams::session`) and the read path (`DatasetBuilder::with_session`).
 
-- header carrying magic, version and block size, so a reader learns the layout from the object,
-- a random nonce per block, because a path-derived nonce breaks the moment the format renames or copies
-  an object, which it does on every commit,
-- the block index and a final-block marker as authenticated data, so reordering and truncation fail,
-- every object ending on a block shorter than a full one, which is what makes "final" readable from a
-  block's length.
+`lance-io` became a direct dependency, pinned to the same exact version as `lance`, because `lance` does
+not re-export the provider trait — and a differently-versioned trait is a different trait.
 
-`crates/euledb-storage/src/crypto/store.rs` — the object-store layer: size translation, range
-translation, and a multipart writer that seals whole blocks and holds the tail back until completion. It
-is written and it compiles, and it is **not wired in**. The crypto module says so at the top.
+## Verified by reading the disk, not by asserting
 
-## What has to happen next
+Every object the format writes is framed — the data file, both manifests, the transaction records, and
+the version hint. `cargo run --release --example inspect_encrypted -p euledb-storage` prints it.
 
-1. **Register a provider for a custom URI scheme** rather than wrapping the store.
-   `ObjectStoreRegistry::insert(scheme, provider)`, `ObjectStoreProvider::new_store`, and
-   `lance_io::object_store::ObjectStore::new` taking an arbitrary store plus the `Url` that decides the
-   scheme. With a non-`file` scheme, `is_local()` is false and `create` goes through the trait.
-2. **Answer the manifest size question first.** Reporting the plaintext size for a manifest produced
-   `Invalid range 0..611 for object of size 574 bytes` from a store named `memory` — a size taken on the
-   raw object combined with content returned through the layer. The cause is not yet understood.
-   **Do not build on top of it until it is.**
-3. **Measure the cost of giving up the local fast paths** — the direct writer, `copy_file`,
-   `remove_dir_all` — the way SUB-11 measured compression. It is a performance cost, not an assumption.
-4. **Choose the block size by measurement**, read amplification against per-block overhead. The default
-   is currently 64 KiB, chosen by nothing.
+Five tests, and the one that carries the others is the **control**:
 
-## Two findings worth carrying forward regardless
+| Test | Why it exists |
+|---|---|
+| the marker IS on disk without encryption | without it, the next test passes against a table that was never encrypted — which is exactly what happened first, because zstd had already made the marker unfindable |
+| the marker is NOT on disk with encryption | the actual claim |
+| rows survive a drop and reopen unchanged | the round trip, reopened from the keyfile the way a caller would |
+| another key cannot read the table | this returned 2000 rows against the first mechanism |
+| a plaintext table is not read as encrypted | the layer must refuse foreign bytes rather than interpret them |
 
-- **A compression-only control is essential to any "the plaintext is not on disk" test.** The first
-  version passed against a completely unencrypted table, because zstd had already made the marker string
-  unfindable. Without a control asserting the marker *is* visible without encryption, that test proves
-  nothing.
-- **Read the dependency's dispatch, not its extension points.** The hook exists, is documented, is
-  called, and is not on the path that matters. Only running it with logging showed that.
+## The manifest size question is answered
+
+It does not recur. The mismatch came from a **partially** bypassed store — the manifest went through the
+layer while its size was observed on the raw object, because the data path had gone around entirely. With
+one consistent path there is one size. Stated as a rule: **a translating layer must be on every path or
+on none.**
+
+## The cost, measured
+
+Best of five, compression off so the numbers are about encryption alone:
+
+| Rows | Size overhead | Round trip |
+|---:|---:|---|
+| 20 000 | +0.06 % | 1.01x |
+| 200 000 | +0.04 % | 2.75x |
+| 1 000 000 | +0.04 % | 3.09x |
+
+Size is negligible — 28 bytes per 64 KiB block is 0.043 % and the measurement matches. **Time is roughly
+3x on a write-plus-read round trip at scale**, bundling the cipher work and the lost local fast path,
+which this measurement cannot separate. See the ADR for the reasoning about which dominates.
+
+## One more finding: the read path was not validating the header
+
+It worked — a plaintext object failed on the tag — but the message was "block 0 did not authenticate"
+rather than "this object is not encrypted by EuleDB", and three error variants were unreachable. The
+compiler's dead-code warning found it. Every read now fetches the header alongside the block span in one
+`get_ranges` call, at no extra round trip.
+
+## Verification (executable)
+
+```bash
+just format && just lint && just test && just qa
+
+# what is actually on disk, and what encryption costs
+cargo run --release --example inspect_encrypted -p euledb-storage
+
+# the framing's own guarantees — break one, a test notices
+#   block index dropped from the AAD     -> reordering accepted
+#   final marker dropped                 -> a forged final block accepted
+#   nonce fixed                          -> identical ciphertext
+#   span not clamped                      -> a read near the end runs off the object
+#   magic / version / block-size check removed -> a foreign object silently read
+#   range-completeness check removed     -> a short answer instead of an error
+```
 
 ## Out of scope / Guardrails
 
-- **NEVER wire the crypto layer up until step 2 is answered.** A layer that looks like encryption and is
-  not is worse than none, because it changes what people are willing to store.
-- **No unauthenticated mode**, however tempting length-preserving encryption looks for removing the size
-  translation entirely. AC-22 requires failing on a failed authentication tag, and a stream cipher with
-  no tag cannot.
-- **Do not encrypt only some objects.** Excluding metadata was tried as a diagnostic and it does leak
-  the schema and row counts. It is a diagnostic, not a design.
+- **The block size stays fixed at the default.** Making it settable first requires deciding whether a
+  reader adopts the size declared in an object's header or refuses a mismatch, and that belongs with
+  AC-74's single configuration mechanism. The 64 KiB default is justified on the numbers in hand.
+- **No unauthenticated mode**, however tempting a length-preserving cipher looks for removing the size
+  translation. AC-22 requires failing on a failed tag, and a stream cipher with no tag cannot.
+- **Never leave an object unencrypted for convenience.** Excluding metadata was tried as a diagnostic and
+  it leaks the schema and row counts. It was a diagnostic, not a design.
+- **A translating layer goes on every path or none.** Half of one is what produced the manifest mismatch.
 
 ## Definition of Done
 
-- [ ] AC-75 covered: every byte of table data at rest encrypted, proven by a test that finds the marker
-      string on disk WITHOUT encryption and fails to find it WITH
-- [ ] AC-22 covered: a failed tag yields no plaintext, and another key cannot read the table
-- [ ] The manifest size question answered, not worked around
-- [ ] The block size chosen by a recorded measurement
-- [ ] The cost of the generic object-store path measured
+- [ ] AC-75 covered: every object encrypted, proven by reading the bytes off disk, with a control test
+- [ ] AC-22 covered: a failed tag yields no plaintext, another key cannot read, a foreign object refused
+- [ ] The manifest size question answered rather than worked around
+- [ ] The cost measured and recorded, including what the number bundles
+- [ ] Every framing guarantee shown to be guarded by a test that fails when it is undone
+- [ ] The block size decision named and deferred with its reason, not silently left
