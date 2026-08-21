@@ -41,11 +41,14 @@ Behind those targets: `cargo fmt`, `cargo clippy --all-targets --all-features -D
 `just` picks the toolchain from `rust-toolchain.toml`, so a local run uses the same minimum supported
 Rust version the pipeline does.
 
+CI runs the same commands on Linux x86_64, Linux aarch64, macOS arm64 and Windows x86_64, against both
+the pinned minimum supported Rust version and stable, plus the advisory, licence and dependency-source
+checks. There is no way to merge past a red gate.
+
 If you change anything under `.github/workflows/`, also run `just lint-workflows`. It needs
 [actionlint](https://github.com/rhysd/actionlint) and [zizmor](https://docs.zizmor.sh) on your `PATH`,
 which is why it is not part of `just lint` — the pipeline runs it on every change either way, so the
-enforcement does not depend on you having them installed. CI runs the same thing on Linux x86_64, Linux aarch64, macOS arm64
-and Windows x86_64, against both the pinned MSRV and stable. There is no way to merge past a red gate.
+enforcement does not depend on you having them installed.
 
 `unsafe` is forbidden at crate roots, and the compiler enforces it. If you genuinely need it in an
 index hot path, [`UNSAFE.md`](UNSAFE.md) states the four things a pull request has to carry before it
@@ -83,7 +86,9 @@ a verdict.
 ## Security
 
 Never open a public issue for a vulnerability. Use
-[private reporting](../../security/advisories/new).
+[private reporting](../../security/advisories/new), and read [SECURITY.md](SECURITY.md) first — it says
+what is in scope, what to expect in return, and what this project does not yet claim about its own
+cryptography.
 
 ## Licence
 
