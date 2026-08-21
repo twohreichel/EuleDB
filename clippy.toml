@@ -1,0 +1,6 @@
+# `unwrap_used` and `expect_used` are denied for the library (see Cargo.toml [workspace.lints]).
+# In a test an unwrap IS the assertion, so exempt tests rather than littering them with allows.
+# These two keys cover #[cfg(test)] modules only. An integration test under tests/ is its own crate
+# and states the allow at its own crate root.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
