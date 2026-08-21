@@ -1,0 +1,69 @@
+# Dependency updates for both ecosystems this repository actually has. Weekly, because a daily cadence
+# on a single-maintainer project produces a queue nobody reads, and a queue nobody reads is how a
+# security update gets merged late.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 10
+    # Let a release settle before proposing it. A version yanked or patched within days of publication
+    # is common enough that reviewing it immediately is mostly wasted effort — and a major gets longer,
+    # because that is the one whose regressions surface late.
+    cooldown:
+      default-days: 5
+      semver-patch-days: 3
+      semver-minor-days: 5
+      semver-major-days: 14
+    # Patch and minor arrive as one pull request: individually they are noise, together they are one
+    # review of one lockfile diff. Majors are deliberately NOT grouped — each is a breaking change that
+    # deserves its own pull request, its own CI run and its own decision.
+    groups:
+      cargo-patch-and-minor:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: [minor, patch]
+    # Conventional Commits, because Release Please derives the version and the changelog from them.
+    # `build` puts a dependency bump under "Build and dependencies" rather than into Features.
+    commit-message:
+      prefix: build
+      prefix-development: build
+      include: scope
+    labels: [dependencies, rust]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 5
+      semver-major-days: 14
+    groups:
+      actions-patch-and-minor:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: [minor, patch]
+    commit-message:
+      prefix: ci
+      include: scope
+    labels: [dependencies, github-actions]
+
+# Two things that are absent on purpose:
+#
+# There is no `ignore` entry anywhere. `ignore` suppresses security updates for the matched dependency
+# as well as version updates, so a blanket ignore is a way of not being told about a vulnerability. If a
+# specific version genuinely has to be held back, that belongs in the manifest as a constraint with a
+# comment, where it is visible.
+#
+# Nothing here is auto-merged, and there is no workflow that does it. Actions least of all: SHA-pinning
+# buys immutability against a retag attack and pays for it by needing these pull requests, so an action
+# bump has to be reviewed as the source diff between the two commits. Merging it on the strength of the
+# version comment in the bump would hand back exactly what the pinning bought.
