@@ -154,13 +154,20 @@ impl ObjectStore for EncryptingObjectStore {
         }
 
         let span = self.frame.ciphertext_span(wanted.clone(), plaintext_len);
-        // get_ranges rather than get_range: the latter lives on an extension trait that is not
-        // callable through a trait object, and one range is the degenerate case of several.
+        // The header AND the block span in one call. Validating the header is what turns "block 0 did
+        // not authenticate" into "this object is not encrypted by EuleDB" or "it declares a block size
+        // of 4096 and this database is configured for 65536" — the difference between a diagnosis and a
+        // shrug. get_ranges exists for exactly this: two ranges, one round trip.
+        let header_span = 0..self.frame.header_len() as u64;
         let fetched = self
             .inner
-            .get_ranges(location, std::slice::from_ref(&span))
+            .get_ranges(location, &[header_span, span.clone()])
             .await?;
-        let sealed = fetched.first().cloned().unwrap_or_default();
+        let header = fetched.first().cloned().unwrap_or_default();
+        self.frame
+            .read_header(&header)
+            .map_err(|err| crypto_error(location, err))?;
+        let sealed = fetched.get(1).cloned().unwrap_or_default();
         let plaintext = self
             .frame
             .open_span(&sealed, span, wanted.clone())
@@ -296,27 +303,5 @@ impl MultipartUpload for SealingUpload {
 
     async fn abort(&mut self) -> StoreResult<()> {
         self.inner.abort().await
-    }
-}
-
-/// Installs the encrypting layer into the on-disk format's object store.
-///
-/// This is the hook the format offers for exactly this purpose: every byte it reads or writes passes
-/// through the store returned here, and it never learns that anything happened (ADR-002).
-#[derive(Debug)]
-pub(crate) struct EncryptingWrapper {
-    frame: BlockFrame,
-}
-
-impl EncryptingWrapper {
-    /// A wrapper sealing with the given frame.
-    pub(crate) const fn new(frame: BlockFrame) -> Self {
-        Self { frame }
-    }
-}
-
-impl lance::io::WrappingObjectStore for EncryptingWrapper {
-    fn wrap(&self, _prefix: &str, original: Arc<dyn ObjectStore>) -> Arc<dyn ObjectStore> {
-        Arc::new(EncryptingObjectStore::new(original, self.frame.clone()))
     }
 }
