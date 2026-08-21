@@ -1,0 +1,14 @@
+# Shown as a "Sponsor" button on the repository once at least one platform below is active.
+# GitHub validates the keys but NOT the accounts — an unenrolled handle simply renders no button.
+# GitHub Sponsors must be enabled for the account before this line has any effect.
+github: [twohreichel]
+
+# Uncomment and fill in only what actually exists. A dead funding link costs more trust
+# than an absent one.
+# ko_fi: <username>
+# liberapay: <username>
+# open_collective: <slug>
+# buy_me_a_coffee: <username>
+# thanks_dev: <username>
+# polar: <username>
+# custom: ["https://example.org/donate"]
