@@ -58,8 +58,22 @@ impl EncryptingProvider {
     }
 
     /// The URI an object under this scheme is addressed by.
+    ///
+    /// Built through `Url::from_file_path` rather than by formatting the path, because a path is not a
+    /// URL. `euledb://C:\\Users\\x` is not a URI — the drive letter becomes the authority and the
+    /// backslashes are not separators — which is how the first version passed on Unix and failed on
+    /// Windows. Going through the file-URL form gets the drive letter, the separators and the
+    /// percent-encoding right, and only the scheme is substituted afterwards.
     pub(crate) fn uri(path: &std::path::Path) -> String {
-        format!("{SCHEME}://{}", path.display())
+        // Absolutised first: a file URL cannot be built from a relative path, and a store rooted at a
+        // relative path is a legitimate thing for a caller to ask for.
+        let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+        match Url::from_file_path(&absolute) {
+            Ok(file) => format!("{SCHEME}://{}", &file[url::Position::BeforeHost..]),
+            // Unreachable for an absolute path, and a lossy URI is more useful than a panic: the format
+            // will reject it with a message naming the path.
+            Err(()) => format!("{SCHEME}://{}", absolute.display()),
+        }
     }
 }
 
@@ -89,8 +103,18 @@ impl lance_io::object_store::ObjectStoreProvider for EncryptingProvider {
     }
 
     fn extract_path(&self, url: &Url) -> lance::Result<Path> {
-        // The inner store is rooted at `/`, so an absolute filesystem path minus its leading slash is
-        // exactly what it wants.
+        // The same two steps the format's own local provider takes, and for the same reason: only
+        // `to_file_path` knows what a Windows drive letter means, and only `from_absolute_path` knows
+        // how to spell it as an object path. Since the scheme is the only difference, the URL is put
+        // back into its file form first — `set_scheme` cannot do it, because the URL specification
+        // forbids moving between a special scheme and a non-special one.
+        let as_file = Url::parse(&format!("file://{}", &url[url::Position::BeforeHost..]));
+        if let Ok(file) = as_file
+            && let Ok(path) = file.to_file_path()
+            && let Ok(object_path) = Path::from_absolute_path(&path)
+        {
+            return Ok(object_path);
+        }
         Path::from_url_path(url.path()).map_err(|err| {
             lance::Error::invalid_input(format!("not a usable path in '{url}': {err}"))
         })

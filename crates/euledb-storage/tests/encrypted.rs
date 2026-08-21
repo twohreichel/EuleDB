@@ -195,3 +195,33 @@ async fn a_plaintext_table_is_not_read_as_encrypted() {
          arbitrary bytes as blocks instead of refusing",
     );
 }
+
+#[tokio::test]
+async fn a_store_rooted_at_a_relative_path_still_works() {
+    // The Windows failure was a path being formatted into a URI instead of converted into one. A
+    // relative root exercises the same conversion — it has to be absolutised before it can be a URL —
+    // and it is a legitimate thing for a caller to ask for.
+    //
+    // Changing the working directory is process-global, which is safe here only because nextest runs
+    // each test in its own process. Under plain `cargo test` this would race every other test.
+    let root = tempfile::tempdir().expect("a temporary directory is available");
+    let previous = std::env::current_dir().expect("a working directory");
+    std::env::set_current_dir(root.path()).expect("the temporary directory is enterable");
+
+    let keyring = Keyring::create(PASSPHRASE).expect("create");
+    let store = LanceStore::new("./relative-root").encrypted(&keyring);
+    let outcome = async {
+        store.create_table("documents", &uncompressed()).await?;
+        store.append("documents", &rows()).await?;
+        store.scan("documents").await
+    }
+    .await;
+
+    std::env::set_current_dir(previous).expect("the previous directory is still there");
+    let read_back = outcome.expect("a relative root must work, absolutised into a URI");
+    assert_eq!(
+        read_back.iter().map(RecordBatch::num_rows).sum::<usize>(),
+        2_000,
+        "a store rooted at a relative path lost rows",
+    );
+}
