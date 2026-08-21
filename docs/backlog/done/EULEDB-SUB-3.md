@@ -7,7 +7,8 @@ size: L
 context_budget: 3000
 safety: CI only, no runtime code
 detail: full
-status: in-progress
+status: done
+pr: https://github.com/twohreichel/EuleDB/pull/3
 ---
 
 ## Goal
@@ -74,9 +75,10 @@ cargo nextest run -E 'test(test_matrix)'
 just format && just lint && just test && just qa
 ```
 
-Then the part only the live pipeline can prove: the run must be green on all 8 test legs before the
-pull request is merged, and the required status checks are configured from the job names that run
-actually produced — never from names guessed in advance.
+Then the part only the live pipeline can prove. The first run was green on all 13 jobs — 8 test legs
+across the four platforms and both toolchains, plus format, both clippy legs, doc and gate. Branch
+protection on `main` now requires all 13 by the names that run produced, with `enforce_admins` on and
+linear history required, which matches the rebase-merge policy.
 
 ## Out of scope / Guardrails
 
@@ -91,8 +93,8 @@ actually produced — never from names guessed in advance.
 
 ## Definition of Done
 
-- [ ] AC-7 covered: format, clippy, test and doc report separately and all are required
-- [ ] AC-11 covered: 4 platforms times 2 toolchains, all green, and no undocumented platform
-- [ ] The live run is green before the merge, on every leg
-- [ ] Required status checks configured from the job names the run produced
-- [ ] Commits follow Conventional Commits, grouped by concern
+- [x] AC-7 covered: format, clippy, test and doc report separately and all are required
+- [x] AC-11 covered: 4 platforms times 2 toolchains, all green, and no undocumented platform
+- [x] The live run is green before the merge, on every leg
+- [x] Required status checks configured from the job names the run produced
+- [x] Commits follow Conventional Commits, grouped by concern
