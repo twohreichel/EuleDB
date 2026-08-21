@@ -30,6 +30,11 @@ Specifically:
 
 ## The quality gate
 
+You need [`protoc`](https://protobuf.dev/installation/) on your `PATH` — the on-disk format generates
+code from protobuf definitions at build time. `brew install protobuf`,
+`apt install protobuf-compiler`, `winget install protobuf`, or a binary from the releases page. Without
+it the build stops with a message saying exactly that.
+
 One command, and all of it must pass before you open a pull request:
 
 ```bash

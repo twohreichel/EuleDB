@@ -61,6 +61,12 @@ jobs:
             rustup toolchain install stable --profile minimal --component clippy --component rustfmt
             echo "RUSTUP_TOOLCHAIN=stable" >> "$GITHUB_ENV"
           fi
+      # The on-disk format generates code from protobuf definitions at build time, so protoc has to be
+      # present. Its own feature would build the compiler from source, but that needs cmake and a C++
+      # toolchain and rebuilds protobuf on every clean build across every leg of this matrix.
+      - uses: taiki-e/install-action@a2a5f6e99e1a31540baa0468acfa302cff0f359f # v2.86.4
+        with:
+          tool: protoc@36.0
       - run: cargo clippy --all-targets --all-features -- -D warnings
 
   test:
@@ -95,7 +101,8 @@ jobs:
           fi
       - uses: taiki-e/install-action@a2a5f6e99e1a31540baa0468acfa302cff0f359f # v2.86.4
         with:
-          tool: cargo-nextest
+          # One invocation for both, so protoc and the test runner are installed together.
+          tool: cargo-nextest,protoc@36.0
       - run: cargo nextest run --all-features
       # nextest does not run doctests, and an example nobody executes is a claim rather than an example.
       - run: cargo test --doc --all-features
@@ -110,6 +117,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The on-disk format generates code from protobuf definitions at build time, so protoc has to be
+      # present. Its own feature would build the compiler from source, but that needs cmake and a C++
+      # toolchain and rebuilds protobuf on every clean build across every leg of this matrix.
+      - uses: taiki-e/install-action@a2a5f6e99e1a31540baa0468acfa302cff0f359f # v2.86.4
+        with:
+          tool: protoc@36.0
       # Warnings are denied through .cargo/config.toml, so a broken intra-doc link fails here too.
       - run: cargo doc --no-deps --all-features --workspace
 
