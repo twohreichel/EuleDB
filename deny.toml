@@ -30,7 +30,16 @@ version = 2
 # so it has to be made explicitly rather than by not noticing.
 yanked = "deny"
 unmaintained = "all"
-ignore = []
+# Ignores are per advisory id, with a reason. Never a whole crate and never a blanket entry: this list
+# is the record of what was judged, and anything not on it still stops the build.
+#
+# RUSTSEC-2024-0436 says `paste` is unmaintained, which is true and is not a vulnerability — it is a
+# proc-macro crate its author considers finished. Proc macros run at build time and their code is not
+# linked into the artifact, and it arrives transitively rather than by our choice. Revisit if it ever
+# gains a real advisory, which is a different id and would therefore not be covered by this entry.
+# The same id is ignored in .cargo/audit.toml, because the two tools read different trees and each
+# needs its own judgement recorded. Change one, change the other.
+ignore = [{ id = "RUSTSEC-2024-0436", reason = "unmaintained-not-vulnerable proc macro, transitive, not linked into the artifact" }]
 
 [licenses]
 version = 2
@@ -44,12 +53,25 @@ allow = [
     "MIT",
     "BSD-2-Clause",
     "BSD-3-Clause",
+    "BSL-1.0",
     "ISC",
     "Zlib",
     "Unicode-3.0",
 ]
 confidence-threshold = 0.93
-exceptions = []
+# MPL-2.0 stays off the allow-list above, deliberately. This is one NAMED exception rather than a
+# blanket allowance, so a direct dependency under MPL-2.0 would still stop the build and need its own
+# decision.
+#
+# option-ext arrives transitively: dirs -> dirs-sys -> option-ext, under lance-index. MPL-2.0 is
+# file-level copyleft — the MPL'd files stay MPL and their source stays available on the registry, but
+# it does not constrain the terms of the larger work. Distributing EuleDB under `Apache-2.0 OR MIT`
+# with this crate in the tree is therefore permitted. What it does not permit is relicensing those
+# files, which nothing here does.
+#
+# Inline rather than a [[licenses.exceptions]] section: a table array here would swallow every
+# [licenses] key written after it, which is a silent misconfiguration rather than an error.
+exceptions = [{ crate = "option-ext", allow = ["MPL-2.0"] }]
 # The list above is a policy statement, so it names licences the current tree does not happen to
 # contain. Without this, cargo-deny warns about each one and the gate output stops being pristine —
 # and output nobody reads is output that hides a real finding.
@@ -64,14 +86,29 @@ multiple-versions = "deny"
 # A wildcard version constraint is not a constraint.
 wildcards = "deny"
 allow-wildcard-paths = true
-# Skips are per duplicate, with a reason, and only where the duplicate cannot ship. Adding one is a
-# decision recorded here — not a reason to loosen `multiple-versions` for everything.
+# Skips are per crate, each with a reason, and the list is the record of what was accepted rather
+# than a loosening of the rule. A duplicate NOT on this list still fails the build, which is the whole
+# point of keeping `multiple-versions = "deny"` against a tree this size.
 #
-# `syn` reaches this tree twice and both paths are proc-macro only: thiserror-impl uses syn 3,
-# zerocopy-derive (via ahash and half, under arrow-array) uses syn 2. Proc macros run at build time and
-# their code is not linked into the artifact, so the cost is compile time and nothing else — and neither
-# version is ours to choose.
-skip = [{ crate = "syn@2", reason = "proc-macro only, via zerocopy-derive under arrow-array. Not linked into the artifact and not ours to pick" }]
+# `syn` is proc-macro only on both paths — thiserror-impl uses 3, zerocopy-derive under arrow-array
+# uses 2. Proc macros run at build time and their code is not linked into the artifact.
+#
+# The rest are transitive duplicates inside the on-disk format's dependency tree, which ADR-001
+# accepted as a whole. None of them is ours to resolve: they are the ordinary consequence of a large
+# tree where different layers upgraded a shared utility crate at different times. `hashbrown` alone
+# appears in five versions, none reachable from a manifest in this repository. Re-examine the list when
+# the format is upgraded — an entry that no longer has a duplicate behind it should go.
+skip = [
+    { crate = "syn@2", reason = "proc-macro only, via zerocopy-derive under arrow-array. Not linked into the artifact and not ours to pick" },
+    { crate = "block-buffer", reason = "transitive, inside the on-disk format's tree. digest 0.10 and 0.11 pull different majors" },
+    { crate = "crypto-common", reason = "transitive, same cause as block-buffer" },
+    { crate = "digest", reason = "transitive, inside the on-disk format's tree. Two majors in use below us" },
+    { crate = "foldhash", reason = "transitive, pulled by two hashbrown majors" },
+    { crate = "getrandom", reason = "transitive, three majors below us via rand and its dependents" },
+    { crate = "hashbrown", reason = "transitive, five versions inside the on-disk format's tree, none reachable from a manifest here" },
+    { crate = "rand", reason = "transitive, two majors below us" },
+    { crate = "rand_core", reason = "transitive, same cause as rand" },
+]
 deny = []
 
 [sources]
