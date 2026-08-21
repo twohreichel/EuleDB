@@ -8,7 +8,8 @@ context_budget: 2500
 safety: additive only — no code exists yet, nothing can regress
 # Name CLAIMING moved to SUB-2: it requires publishing, which requires Cargo.toml (AC-65).
 detail: full
-status: in-progress
+status: done
+pr: https://github.com/twohreichel/EuleDB/pull/1
 ---
 
 ## Goal
@@ -99,7 +100,7 @@ git diff --cached -- . ':!docs/backlog/**/EULEDB-SUB-1.md' \
 
 ## Definition of Done
 
-- [ ] Both licence files present, `README.md` names them
-- [ ] `git check-ignore` confirms `docs/` tracked and `.vscode/`, `.claude/`, `CLAUDE.md` ignored
-- [ ] All verification commands above run and pass, output pristine
-- [ ] Commits follow Conventional Commits, grouped by concern rather than one mega-commit
+- [x] Both licence files present, `README.md` names them
+- [x] `git check-ignore` confirms `docs/` tracked and `.vscode/`, `.claude/`, `CLAUDE.md` ignored
+- [x] All verification commands above run and pass, output pristine
+- [x] Commits follow Conventional Commits, grouped by concern rather than one mega-commit
