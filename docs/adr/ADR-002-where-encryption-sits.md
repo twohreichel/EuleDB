@@ -85,3 +85,80 @@ which is an argument for this shape rather than against it.
 The decision splits the work in two, which is why AC-20 was narrowed and AC-75 appended (see the
 specification's § Decisions taken). The key hierarchy lands in `EULEDB-SUB-12`, the encrypted data path
 in `EULEDB-SUB-18`.
+
+---
+
+## Amendment, 2026-08-21 — the chosen mechanism does not reach the data files
+
+**Status of the decision above: the placement is still right, the mechanism is wrong.** Encryption does
+belong in a layer the format writes through, and block framing is still what makes a range read
+possible. But `object_store_wrapper` is **not** that layer on a local filesystem, which is the only
+platform this project targets.
+
+### The evidence
+
+`lance_io::object_store::ObjectStore::create`, the writer every data file is written with, dispatches on
+the URI scheme:
+
+```rust
+pub async fn create(&self, path: &Path) -> Result<Box<dyn Writer>> {
+    match self.scheme.as_str() {
+        "file" => {
+            // tokio::fs::File, a NamedTempFile, and a LocalWriter
+            Ok(Box::new(LocalWriter::new(file, path.clone(), temp_path, ...)))
+        }
+        _ => Ok(Box::new(ObjectWriter::new(self, path).await?)),
+    }
+}
+```
+
+The `"file"` branch never touches the `object_store` trait, so a wrapper installed on it is not on the
+path. The same is true of `copy_file` and `remove_dir_all`, both behind `is_local()`.
+
+Measured, not inferred. With the wrapper installed and logging every call:
+
+- the wrapper was constructed five times and *was* consulted for `list` and for the manifest `put`,
+- **no data-file write reached it at all**, and
+- the data file on disk began with no framing magic and **contained the row text in the clear**.
+
+The test that caught it is the one worth keeping: opening the table with a *different* keyring returned
+**2000 rows successfully**. A layer that looks like encryption and is not is worse than none, because it
+changes what people are willing to store.
+
+Two further observations, one of them still unexplained:
+
+- **A compression-only control is essential.** The first "the plaintext is not on disk" test passed
+  against a completely unencrypted table, because zstd had already made the marker string unfindable.
+  Without the control asserting the marker *is* visible without encryption, that test proved nothing.
+- **Manifest sizes collide with size translation, and the cause is not yet understood.** Reporting the
+  plaintext size for a manifest produced `Invalid range 0..611 for object of size 574 bytes` from a
+  store named `memory` — a size taken on the raw object combined with content returned through the
+  layer. It is recorded here rather than guessed at, because building the corrected mechanism on top of
+  an unexplained failure is how a security defect ships.
+
+### The corrected mechanism
+
+**Register a provider for a custom URI scheme instead of wrapping the store.**
+`ObjectStoreRegistry::insert(scheme, provider)` and `ObjectStoreProvider::new_store` are public, and
+`lance_io::object_store::ObjectStore::new` accepts an arbitrary `Arc<dyn object_store::ObjectStore>`
+together with the `Url` that decides the scheme. With a scheme of, say, `euledb`, `is_local()` is false
+and `create` takes the `ObjectWriter` branch — through the trait, and therefore through the encrypting
+layer.
+
+Its costs, which are real and belong in the decision:
+
+- **The format's local fast paths are given up**: the direct `tokio::fs` writer, `copy_file` and
+  `remove_dir_all`. Everything goes through the generic object-store path. That is a performance cost to
+  be measured, not assumed away.
+- **The registry has to be threaded through both the read and the write path**, which happens via a
+  `Session` rather than through `ObjectStoreParams`.
+- **The manifest size question returns** and has to be answered before anything is wired up.
+
+### What was kept, and what was deliberately not
+
+`crates/euledb-storage/src/crypto/frame.rs` — the block framing — is complete and carries 36 tests, and
+the object-store layer that sits on it is written. Neither is wired in, and the crypto module says so at
+the top with this amendment cited. Removing them would discard the part that is correct; wiring them
+would publish a claim that is false.
+
+`EULEDB-SUB-18` returns to the backlog with this design, rather than being closed.

@@ -163,6 +163,13 @@ impl Keyring {
     pub fn data_key_bytes(&self) -> &[u8; KEY_LEN] {
         self.data_key.expose()
     }
+
+    /// A frame that seals with this keyring's data key.
+    ///
+    /// The one place the data key is put to work. Everything else here only wraps and unwraps it.
+    pub(crate) fn frame(&self, block_size: super::BlockSize) -> super::BlockFrame {
+        super::BlockFrame::new(self.data_key.clone(), block_size)
+    }
 }
 
 /// Derive the key-encryption key from the passphrase.

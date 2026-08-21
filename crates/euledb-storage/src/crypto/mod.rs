@@ -8,11 +8,27 @@
 //! bytes, not rewriting every byte of every table. Deriving the data key from the passphrase instead
 //! would tie the two together and make rotation a full rewrite (ADR-002).
 //!
-//! Nothing here encrypts table data. That is the data path, and it is deliberately a separate piece of
-//! work — see `docs/adr/ADR-002-where-encryption-sits.md`.
+//! Nothing here encrypts table data yet, and the reason is not that the work is unfinished — it is that
+//! the mechanism ADR-002 chose does not reach the data files at all on a local filesystem. The evidence
+//! and the corrected design are in the ADR's amendment and in `EULEDB-SUB-18`. **Do not wire this up
+//! until that is settled**: a layer that looks like encryption and is not is worse than none.
+#![allow(
+    dead_code,
+    reason = "the framing and the object-store layer are complete and tested, and deliberately not \
+              wired in: the hook they were built for is bypassed on a local filesystem. See \
+              docs/adr/ADR-002-where-encryption-sits.md § Amendment. Removing them would throw away \
+              the part that is correct, and wiring them would ship a false claim."
+)]
 
 mod frame;
 mod keyring;
 mod secret;
+mod store;
 
+pub(crate) use frame::{BlockFrame, BlockSize};
 pub use keyring::{Keyring, KeyringError};
+#[expect(
+    unused_imports,
+    reason = "see the module note: complete, tested, deliberately not wired in"
+)]
+pub(crate) use store::EncryptingWrapper;
