@@ -11,6 +11,38 @@ Your data stays yours.
 
 > Frag deine Daten – klug wie eine Eule, und alles bleibt bei dir. 🇪🇺
 
+## Status
+
+**Early development. Nothing works yet.** The published crate is a placeholder, the public API is
+deliberately empty, and the storage foundation is still being built. There is nothing here to use today —
+this section will say otherwise when that changes.
+
+## What it is for
+
+- Searching your own data **by meaning**, not only by keyword, without any of it leaving your machine.
+- Asking a question in plain language and **seeing what the system understood before it runs**, so you
+  can trust an answer without learning a query language.
+- Running on whatever hardware you have, from a workstation down to a low-power single-board computer.
+- One encrypted file you can copy, back up and move. No daemon, no port, no account.
+
+## What it deliberately is not
+
+Knowing the boundaries is the fastest way to tell whether this is the right tool, so they are stated
+rather than discovered:
+
+- **Not a server.** No daemon, no network listener, no client/server protocol. It is a library you embed.
+- **Not a general-purpose SQL engine.** No joins, no cross-table transactions, no query optimiser beyond
+  the hybrid planner. Analytical workloads belong in DuckDB, and that is not a gap to be filled later.
+- **Not a cloud service.** Multi-device convergence is peer-to-peer over a transport you supply. Nothing
+  here calls home, and there is no hosted anything.
+- **Not a place models are trained.** Models are consumed, never trained or fine-tuned.
+- **Not a storage-format project.** The on-disk format is an existing one, pinned and kept behind a
+  boundary. The interesting part is the query layer above it.
+
+If you are unsure whether an idea fits inside those lines,
+[open a discussion](https://github.com/twohreichel/EuleDB/discussions) before writing code. See
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Licence
 
 Dual-licensed under either of
