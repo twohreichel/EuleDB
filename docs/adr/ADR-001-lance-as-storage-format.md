@@ -21,7 +21,7 @@ the sharper question: how much is left to build at all? Enough — none of it in
 ## Decision
 
 Use **Lance** as the on-disk format, pinned to an exact version, reached only through an internal
-storage trait so that no module outside the storage crate references a Lance type (AC-14).
+storage trait so that no module outside the storage crate references a Lance type (AC-17).
 
 Apache Arrow (`arrow-rs`) stays the in-memory representation and the interchange contract.
 
@@ -30,7 +30,7 @@ Apache Arrow (`arrow-rs`) stays the in-memory representation and the interchange
 **Positive.**
 - 3-5 person-months redirected from storage to the differentiating layers.
 - Random access, versioning, zstd/FSST-class string encoding and IVF-PQ arrive for free.
-- Arrow-native, so the eventual zero-copy Python path (AC-56) needs no conversion layer.
+- Arrow-native, so the eventual zero-copy Python path (AC-59) needs no conversion layer.
 
 **Negative, and accepted.**
 - Lance is under active development; format and API changes are possible. Mitigated by the exact
@@ -57,3 +57,10 @@ place analytical workloads outside this project.
 
 **SQLite + an extension.** Maximum ubiquity. Rejected: row-oriented, so the columnar scans the hybrid
 planner depends on would be fighting the engine.
+
+## Amendments
+
+**2026-08-21** — three criterion cross-references corrected: the trait boundary is AC-17 (was AC-14),
+the zero-copy Python path is AC-59 (was AC-56), and the vector-index overlap is AC-34 and AC-35 (was
+AC-31). Stale pointers from an earlier numbering. **The decision itself is unchanged** — an accepted
+decision record is immutable in its decision, not in its typos.
