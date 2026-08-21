@@ -54,10 +54,10 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-  # AC-13 requires the publish to run only after the quality and supply-chain gates passed on the very
-  # commit being released. Branch protection already makes that true by construction, since the release
-  # pull request goes through the same required checks as any other. This job proves it rather than
-  # assuming it, because "by construction" stops being true the moment someone relaxes a setting.
+  # A publish may only happen after the quality and supply-chain gates passed on the very commit being
+  # released. Branch protection already makes that true by construction, since the release pull request
+  # goes through the same required checks as any other. This job proves it rather than assuming it,
+  # because "by construction" stops being true the moment someone relaxes a setting.
   verify-gates:
     name: verify-gates
     needs: release-please

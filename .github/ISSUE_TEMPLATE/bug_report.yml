@@ -10,7 +10,7 @@ body:
         **platform** and a **reproduction** — the fields below ask for exactly those.
 
         If this is a security vulnerability, close this form and
-        [report it privately](../../security/advisories/new) instead.
+        [report it privately](https://github.com/twohreichel/EuleDB/security/advisories/new) instead.
 
   - type: textarea
     id: summary
