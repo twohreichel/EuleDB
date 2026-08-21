@@ -1,0 +1,24 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+# Inherited by every member with `field.workspace = true`, so the publish metadata of AC-65 is stated
+# once instead of drifting between crates.
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.91.0"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/twohreichel/EuleDB"
+categories = ["database-implementations", "database"]
+keywords = ["database", "embedded", "hybrid-search", "vector-search", "local-first"]
+
+[workspace.dependencies]
+toml = "0.9"
+
+[workspace.lints.clippy]
+# The public API returns failures as values and never aborts its host process (AC-71). Denying the
+# two shortcuts here, from the first crate, is cheaper than retrofitting the habit across the chain.
+# Tests are exempt via clippy.toml — an unwrap in a test is an assertion.
+unwrap_used = "deny"
+expect_used = "deny"

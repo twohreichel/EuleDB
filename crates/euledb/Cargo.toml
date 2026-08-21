@@ -1,0 +1,21 @@
+[package]
+name = "euledb"
+description = "Local-first embedded hybrid database: exact filters, vector search and BM25 full text in one encrypted file, queryable in plain language."
+readme = "README.md"
+# These tests assert properties of the repository — that every crate root forbids unsafe, that the
+# manifests carry publish metadata. They read files above the package root, so they cannot pass from a
+# published .crate and are excluded from it rather than shipped broken.
+exclude = ["tests/repository_invariants.rs"]
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+categories.workspace = true
+keywords.workspace = true
+
+[dev-dependencies]
+toml.workspace = true
+
+[lints]
+workspace = true
