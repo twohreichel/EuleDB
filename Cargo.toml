@@ -46,6 +46,8 @@ getrandom = "0.3"
 async-trait = "0.1"
 bytes = "1"
 object_store = "0.13"
+# The URL type the format's provider contract is expressed in.
+url = "2"
 arrow-array = "58"
 # The on-disk format, pinned exactly (ADR-001). default-features = false is load-bearing, not tidiness:
 # lance enables aws, azure, gcp, oss, tencent, tos, goosefs, huggingface and geo by default — every
@@ -57,6 +59,9 @@ arrow-array = "58"
 # toolchain, and rebuilds protobuf on every clean build across eight CI legs. Requiring the small
 # prebuilt binary and installing a pinned one in CI is the cheaper trade. CONTRIBUTING.md says so.
 lance = { version = "=10.0.0", default-features = false }
+# The provider trait the encrypted URI scheme is registered through. `lance` does not re-export it, and
+# it must be the SAME version as lance or the trait implemented here is a different trait.
+lance-io = { version = "=10.0.0", default-features = false }
 arrow-schema = "58"
 # TryStreamExt, to collect a scan. Already in the tree through lance, so this adds nothing.
 futures-util = { version = "0.3", default-features = false }
