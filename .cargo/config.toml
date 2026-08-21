@@ -1,0 +1,5 @@
+# A broken intra-doc link is a build failure, not a warning nobody reads. Set here rather than as a
+# shell variable in the justfile so it applies identically to a local run, to CI, and to a contributor
+# on Windows, where `VAR=x cmd` is not valid syntax.
+[build]
+rustdocflags = ["-D", "warnings"]
