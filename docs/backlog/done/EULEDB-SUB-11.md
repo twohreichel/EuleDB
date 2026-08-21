@@ -128,6 +128,25 @@ cargo run --release --example measure_encoding -p euledb-storage
 - Do not raise the default level on the strength of the table above. Two per cent is not worth several
   times the CPU on a four-core machine that is also running inference.
 
+## The gate went red on aarch64, and why
+
+Both linux-aarch64 legs were killed with **SIGTERM during the build** — exit 143, at seven and a half
+minutes, well inside the thirty-minute timeout — while x86_64, macOS and Windows all passed. Two
+independent runners, two different times, so not a cancellation and not a flake. The aarch64 images have
+less disk and less memory than the x86_64 ones, and the dependency tree the previous ticket introduced is
+477 crates including datafusion.
+
+Three changes, in order of how much they are guesses:
+
+1. **`debug = "line-tables-only"` for the dev and test profiles.** Measured, not assumed: `target/` went
+   from **7.7 GB to 4.7 GB**. Line tables still give file and line in a backtrace, which is what a test
+   failure needs — full DWARF is only needed for a step debugger, and that can be turned back on locally.
+2. **Dependency caching**, keyed per platform and toolchain. Deferred in SUB-3 with the reason "it would
+   save nothing on a 16-package tree, revisit when Lance lands". It has landed. Beyond time, it lowers
+   the peak: a cached build compiles a handful of crates instead of hundreds.
+3. **A step reporting free disk and memory before the build.** The first failure cost two rounds of
+   speculation because SIGTERM says nothing about which resource ran out. The next one will say.
+
 ## Definition of Done
 
 - [x] AC-18 covered: zstd applied, level configurable per table at creation, and both facts tested
@@ -137,3 +156,4 @@ cargo run --release --example measure_encoding -p euledb-storage
 - [x] The measurement is reproducible by one documented command
 - [x] Rows still come back unchanged, with the storage configuration stripped from the caller's schema
 - [x] Commits follow Conventional Commits, grouped by concern
+- [x] The pipeline is green on all four platforms, and the aarch64 failure diagnosed rather than retried
