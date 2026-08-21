@@ -1,0 +1,78 @@
+# Advisories, licences, banned crates and dependency sources. Separate from the CI workflow because it
+# runs on a schedule as well: an advisory published after a merge has to surface without anyone touching
+# the code, and re-running the whole platform matrix weekly to find that out would be waste.
+name: Supply chain
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Mondays, 06:17 UTC. Off the hour on purpose — the top of the hour is when every scheduled
+    # workflow on the platform queues at once, and a delayed run reports late.
+    - cron: "17 6 * * 1"
+  # Lets a maintainer re-check after publishing a fix without waiting a week.
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: supply-chain-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  deny:
+    name: cargo-deny
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@a2a5f6e99e1a31540baa0468acfa302cff0f359f # v2.86.4
+        with:
+          tool: cargo-deny
+      # All four sections. The licence check is what enforces that every dependency permits
+      # redistribution under Apache-2.0 OR MIT — see deny.toml, where the policy is stated.
+      - run: cargo deny check
+
+  audit:
+    name: cargo-audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@a2a5f6e99e1a31540baa0468acfa302cff0f359f # v2.86.4
+        with:
+          tool: cargo-audit
+      - run: cargo audit --deny warnings
+
+  gate:
+    name: supply-chain gate
+    needs: [deny, audit]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Verify both checks succeeded
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        shell: bash
+        run: |
+          echo "upstream results: $RESULTS"
+          for result in $RESULTS; do
+            if [ "$result" != success ]; then
+              echo "::error::a supply-chain check did not succeed"
+              exit 1
+            fi
+          done
