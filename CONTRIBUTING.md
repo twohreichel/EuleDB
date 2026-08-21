@@ -37,11 +37,14 @@ just format && just lint && just test && just qa
 ```
 
 Behind those targets: `cargo fmt`, `cargo clippy --all-targets --all-features -D warnings`,
-`cargo nextest run`, `cargo deny check`. CI runs the same thing on Linux x86_64, Linux aarch64, macOS arm64
+`cargo nextest run` plus the doctests, `cargo doc` with warnings denied, and `cargo publish --dry-run`.
+`just` picks the toolchain from `rust-toolchain.toml`, so a local run uses the same minimum supported
+Rust version the pipeline does. CI runs the same thing on Linux x86_64, Linux aarch64, macOS arm64
 and Windows x86_64, against both the pinned MSRV and stable. There is no way to merge past a red gate.
 
-`unsafe` is forbidden at crate roots. If you genuinely need it in an index hot path, it goes in an
-inventoried module with its invariant written down.
+`unsafe` is forbidden at crate roots, and the compiler enforces it. If you genuinely need it in an
+index hot path, [`UNSAFE.md`](UNSAFE.md) states the four things a pull request has to carry before it
+is admissible.
 
 ## Commit messages decide the version number
 
