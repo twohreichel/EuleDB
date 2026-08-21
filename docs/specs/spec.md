@@ -175,8 +175,10 @@ Every `AC-n` must end with at least one passing test; every task must name the `
   documentation SHALL state whether that encoding is provided by the Lance layer or by an own encoder —
   no own implementation SHALL be written before the Lance behaviour has been measured.
 - **AC-20:** WHEN a database is created with a passphrase, THE SYSTEM SHALL derive a key-encryption key
-  via Argon2id and SHALL encrypt all data at rest with AES-256-GCM under a separate, rotatable
-  data-encryption key wrapped by that KEK.
+  via Argon2id and SHALL use it to wrap a separate, rotatable AES-256-GCM data-encryption key, persisted
+  alongside the database. IF the passphrase is wrong, THEN unwrapping SHALL fail closed with a distinct
+  error and the data-encryption key SHALL NOT be recoverable. (Encrypting the data itself with that key
+  is AC-75 — see § Decisions taken.)
 - **AC-21:** WHEN the data-encryption key is rotated, THE SYSTEM SHALL re-wrap the DEK without
   rewriting the encrypted payload, and previously written data SHALL remain readable.
 - **AC-22:** IF an encrypted file is opened with the wrong passphrase, or IF any authentication tag
@@ -201,6 +203,11 @@ Every `AC-n` must end with at least one passing test; every task must name the `
   API SHALL NOT panic on malformed input, a missing or unreadable file, a permission error or a failed
   decryption — a library that aborts its host process on bad data is not usable as an embedded
   component.
+
+- **AC-75:** THE SYSTEM SHALL encrypt every byte of table data at rest with AES-256-GCM under the
+  data-encryption key of AC-20, in independently addressable blocks, so that reading a range of a file
+  does not require decrypting the whole file. A read whose authentication tag fails SHALL yield no
+  plaintext for that block or any other.
 
 - **AC-74:** THE SYSTEM SHALL expose every tunable through ONE documented configuration mechanism,
   each with a stated default and a stated effect. No behaviour SHALL be adjustable only by editing
@@ -438,6 +445,16 @@ Two consequences that are easy to get wrong:
 - **First public release after P2.** Collect community feedback before the expensive NL layer. The
   research sets a continue threshold of >= 50 GitHub stars or >= 3 external interested parties with a
   concrete use case.
+- **AC-20 was split, and AC-75 appended, because it bundled two independently deliverable things.**
+  As written it required both the key hierarchy (Argon2id key-encryption key wrapping a rotatable
+  data-encryption key) and the encrypted data path (every byte at rest under that key). Those are
+  different sizes of problem: the key hierarchy is self-contained and testable in isolation, while the
+  data path needs a block-framed AEAD behind the storage format's object-store hook and is
+  security-critical code. Delivering them in one change would mean a single large diff of cryptography
+  reviewed in one sitting, which is the arrangement most likely to let a defect through. AC-20 now
+  covers the key hierarchy including failing closed on a wrong passphrase, AC-75 covers the data path,
+  and AC-22 stays with the data path where authentication tags are actually verified. See
+  `docs/adr/ADR-002-where-encryption-sits.md`.
 - **The planning tree is tracked under `docs/`, not kept local.** Specification, decision records,
   backlog and the research report moved out of the ignored `.vscode/` tree. The specification is the
   durable artifact of spec-driven development and the code is the regenerable part, so an untracked
