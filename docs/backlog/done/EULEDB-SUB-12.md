@@ -7,7 +7,8 @@ size: M
 context_budget: 3000
 safety: opt-in passphrase, no existing path changes
 detail: full
-status: in-progress
+status: done
+pr: https://github.com/twohreichel/EuleDB/pull/12
 ---
 
 ## Goal
@@ -112,8 +113,8 @@ just format && just lint && just test && just qa
 
 ## Definition of Done
 
-- [ ] AC-20 covered: Argon2id KEK wrapping a randomly generated, rotatable DEK, persisted
-- [ ] A wrong passphrase fails closed with a distinct error, proven by test
-- [ ] Key material zeroized on drop and absent from every `Debug` rendering, proven by test
-- [ ] Every test observed failing first
-- [ ] Commits follow Conventional Commits, grouped by concern
+- [x] AC-20 covered: Argon2id KEK wrapping a randomly generated, rotatable DEK, persisted
+- [x] A wrong passphrase fails closed with a distinct error, proven by test
+- [x] Key material zeroized on drop and absent from every `Debug` rendering, proven by test
+- [x] Every test observed failing first
+- [x] Commits follow Conventional Commits, grouped by concern
