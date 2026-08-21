@@ -136,3 +136,45 @@ fn the_pinned_toolchain_matches_the_declared_minimum_version() {
          would no longer be verifying the version the crate claims to support",
     );
 }
+
+/// The platforms this project claims to support, paired with the spelling the contribution guide uses.
+///
+/// Hand-written on purpose: it is the independent statement both the pipeline and the prose are
+/// checked against, so drift on either side fails rather than one silently following the other.
+const SUPPORTED_PLATFORMS: [(&str, &str); 4] = [
+    ("linux-x86_64", "Linux x86_64"),
+    ("linux-aarch64", "Linux aarch64"),
+    ("macos-arm64", "macOS arm64"),
+    ("windows-x86_64", "Windows x86_64"),
+];
+
+#[test]
+fn the_test_matrix_covers_exactly_the_platforms_the_guide_claims() {
+    let root = workspace_root();
+    let workflow =
+        fs::read_to_string(root.join(".github/workflows/ci.yml")).expect("the CI workflow exists");
+    let guide = fs::read_to_string(root.join("CONTRIBUTING.md")).expect("CONTRIBUTING.md exists");
+
+    let mut in_matrix: Vec<&str> = workflow
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("- { name: "))
+        .filter_map(|rest| rest.split(',').next())
+        .collect();
+    in_matrix.sort_unstable();
+
+    let mut claimed: Vec<&str> = SUPPORTED_PLATFORMS.iter().map(|(id, _)| *id).collect();
+    claimed.sort_unstable();
+
+    assert_eq!(
+        in_matrix, claimed,
+        "the CI matrix and the supported-platform list disagree. A platform the matrix does not \
+         cover must not be claimed as supported, and one it covers should not be a secret.",
+    );
+
+    for (id, prose) in SUPPORTED_PLATFORMS {
+        assert!(
+            guide.contains(prose),
+            "the matrix runs {id} but CONTRIBUTING.md never mentions it as \"{prose}\"",
+        );
+    }
+}
