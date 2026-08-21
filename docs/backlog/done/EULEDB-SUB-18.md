@@ -7,7 +7,8 @@ size: L
 context_budget: 3000
 safety: opt-in — a store without a keyring behaves exactly as before
 detail: full
-status: in-progress
+status: done
+pr: https://github.com/twohreichel/EuleDB/pull/13
 ---
 
 ## Goal
@@ -122,9 +123,9 @@ cargo run --release --example inspect_encrypted -p euledb-storage
 
 ## Definition of Done
 
-- [ ] AC-75 covered: every object encrypted, proven by reading the bytes off disk, with a control test
-- [ ] AC-22 covered: a failed tag yields no plaintext, another key cannot read, a foreign object refused
-- [ ] The manifest size question answered rather than worked around
-- [ ] The cost measured and recorded, including what the number bundles
-- [ ] Every framing guarantee shown to be guarded by a test that fails when it is undone
-- [ ] The block size decision named and deferred with its reason, not silently left
+- [x] AC-75 covered: every object encrypted, proven by reading the bytes off disk, with a control test
+- [x] AC-22 covered: a failed tag yields no plaintext, another key cannot read, a foreign object refused
+- [x] The manifest size question answered rather than worked around
+- [x] The cost measured and recorded, including what the number bundles
+- [x] Every framing guarantee shown to be guarded by a test that fails when it is undone
+- [x] The block size decision named and deferred with its reason, not silently left
