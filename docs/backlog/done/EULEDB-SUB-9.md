@@ -7,7 +7,8 @@ size: M
 context_budget: 3000
 safety: new crate content, no consumer yet
 detail: full
-status: in-progress
+status: done
+pr: https://github.com/twohreichel/EuleDB/pull/9
 ---
 
 ## Goal
@@ -115,9 +116,9 @@ cargo test --doc -p euledb-storage    # both doc examples execute, including the
 
 ## Definition of Done
 
-- [ ] AC-15 covered: a schema is an Arrow schema, a mismatching batch is rejected by column and reason
-- [ ] Every failing test observed failing first, or proven falsifiable where it was not
-- [ ] Every branch of the validator shown to be guarded by a mutation check
-- [ ] Doc examples compiled and executed by the suite
-- [ ] The duplicate-version policy applied by exception with a reason, not loosened
-- [ ] Commits follow Conventional Commits, grouped by concern
+- [x] AC-15 covered: a schema is an Arrow schema, a mismatching batch is rejected by column and reason
+- [x] Every failing test observed failing first, or proven falsifiable where it was not
+- [x] Every branch of the validator shown to be guarded by a mutation check
+- [x] Doc examples compiled and executed by the suite
+- [x] The duplicate-version policy applied by exception with a reason, not loosened
+- [x] Commits follow Conventional Commits, grouped by concern
