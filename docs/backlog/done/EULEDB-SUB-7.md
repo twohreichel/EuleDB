@@ -7,7 +7,8 @@ size: M
 context_budget: 3000
 safety: the release pull request is inert until merged
 detail: full
-status: in-progress
+status: done
+pr: https://github.com/twohreichel/EuleDB/pull/7
 ---
 
 ## Goal
@@ -103,9 +104,9 @@ open the first release pull request. Both are recorded below as maintainer steps
 
 ## Definition of Done
 
-- [ ] AC-12 covered: version and changelog derived from Conventional Commits, no hand-written version
-- [ ] AC-13 covered: publish only from a release tag, and only after the gates passed on that commit
-- [ ] The version baseline makes the first release 0.1.0 rather than 0.2.0
-- [ ] Workflow clean under actionlint and zizmor at the auditor persona
-- [ ] The three maintainer steps recorded where they will be found again
-- [ ] Commits follow Conventional Commits, grouped by concern
+- [x] AC-12 covered: version and changelog derived from Conventional Commits, no hand-written version
+- [x] AC-13 covered: publish only from a release tag, and only after the gates passed on that commit
+- [x] The version baseline makes the first release 0.1.0 rather than 0.2.0
+- [x] Workflow clean under actionlint and zizmor at the auditor persona
+- [x] The three maintainer steps recorded where they will be found again
+- [x] Commits follow Conventional Commits, grouped by concern
