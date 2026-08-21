@@ -10,3 +10,15 @@ language through a sandboxed, validated query layer. No cloud, no server, no SQL
 Your data stays yours.
 
 > Frag deine Daten – klug wie eine Eule, und alles bleibt bei dir. 🇪🇺
+
+## Licence
+
+Dual-licensed under either of
+
+- [Apache License, Version 2.0](LICENSE-APACHE)
+- [MIT licence](LICENSE-MIT)
+
+at your option. Copyright (c) 2026 Andreas Reichel.
+
+Unless you state otherwise, any contribution you intentionally submit for inclusion in this work is
+licensed under the same dual licence, without additional terms or conditions.
