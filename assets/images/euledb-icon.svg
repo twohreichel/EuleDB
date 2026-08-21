@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="EuleDB Logo">
+  <!-- Nachtblauer Hintergrund -->
+  <rect x="0" y="0" width="128" height="128" rx="30" fill="#0D2038"/>
+
+  <!-- Ohrbüschel -->
+  <path d="M36 42 L26 22 L52 32 Z" fill="#3C6FA6"/>
+  <path d="M92 42 L102 22 L76 32 Z" fill="#3C6FA6"/>
+
+  <!-- Körper = Datenbank-Zylinder -->
+  <path d="M28 46 v38 a36 16 0 0 0 72 0 V46 Z" fill="#29527F"/>
+
+  <!-- DB-Schichten = Bauchfedern -->
+  <path d="M28 66 a36 14 0 0 0 72 0" fill="none" stroke="#3C6FA6" stroke-width="3" stroke-linecap="round"/>
+  <path d="M28 80 a36 14 0 0 0 72 0" fill="none" stroke="#3C6FA6" stroke-width="3" stroke-linecap="round"/>
+
+  <!-- Zylinder-Deckel = Kopf -->
+  <ellipse cx="64" cy="46" rx="36" ry="16" fill="#3C6FA6"/>
+
+  <!-- Augen -->
+  <circle cx="47" cy="52" r="14" fill="#F5B841"/>
+  <circle cx="81" cy="52" r="14" fill="#F5B841"/>
+  <circle cx="47" cy="52" r="6" fill="#0D2038"/>
+  <circle cx="81" cy="52" r="6" fill="#0D2038"/>
+  <circle cx="50" cy="49" r="2.4" fill="#FFF6E3"/>
+  <circle cx="84" cy="49" r="2.4" fill="#FFF6E3"/>
+
+  <!-- Schnabel -->
+  <path d="M58 66 h12 L64 76 Z" fill="#F08A24"/>
+</svg>

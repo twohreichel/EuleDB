@@ -1,0 +1,40 @@
+# --- Rust / Cargo -----------------------------------------------------------
+/target/
+**/*.rs.bk
+*.pdb
+
+# Cargo.lock stays committed — cargo recommends it for every project since 1.84,
+# and a database needs reproducible builds for both the lib and the CLI.
+
+# --- Coverage & profiling ---------------------------------------------------
+*.profraw
+*.profdata
+/coverage/
+lcov.info
+perf.data
+perf.data.old
+flamegraph.svg
+
+# --- Test tooling -----------------------------------------------------------
+*.snap.new
+*.pending-snap
+/mutants.out*/
+/fuzz/target/
+/fuzz/corpus/
+/fuzz/artifacts/
+
+# --- Secrets & local config -------------------------------------------------
+.env
+.env.*
+!.env.example
+
+# --- OS ---------------------------------------------------------------------
+.DS_Store
+._*
+Thumbs.db
+
+# --- Editors ----------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*~
