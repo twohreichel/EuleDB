@@ -1,0 +1,76 @@
+# Supply-chain policy. `cargo deny check` runs all four sections on every pull request and once a week,
+# so an advisory published after a merge still surfaces without anyone touching the code.
+
+[graph]
+# Check the platforms the project claims to support, and only those. A dependency that is only ever
+# compiled on a target nobody supports is not part of this project's supply chain.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+]
+all-features = true
+
+# What each tool actually covers, measured rather than assumed on 2026-08-21:
+#
+# - cargo-deny evaluates normal and build dependencies. A dev-dependency with an incompatible licence
+#   does NOT fail this check, and that is correct: a dev-dependency is never redistributed, so its
+#   licence cannot constrain how this crate may be licensed. Verified by adding an MPL-2.0 crate in
+#   both positions — rejected as a normal dependency, ignored as a dev-dependency.
+# - cargo-audit reads Cargo.lock, which lists the dev tree too. So the dependencies that execute during
+#   `cargo test` on a developer machine and in CI — the ones cargo-deny leaves out — are covered there.
+#
+# That division is why AC-8 names both tools, and why running only one would leave a real gap rather
+# than a redundant check.
+
+[advisories]
+version = 2
+# A yanked version is a version its author withdrew. Continuing to build against one is a decision,
+# so it has to be made explicitly rather than by not noticing.
+yanked = "deny"
+unmaintained = "all"
+ignore = []
+
+[licenses]
+version = 2
+# The project ships under `Apache-2.0 OR MIT`, so a dependency licence has to permit redistribution
+# under both. This list is a POLICY, not a prediction: it is the permissive class, and it deliberately
+# excludes every copyleft licence — MPL-2.0, LGPL, GPL, AGPL and relatives. A dependency outside this
+# list is a licensing decision that needs a written reason, which is exactly why the build stops.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+]
+confidence-threshold = 0.93
+exceptions = []
+# The list above is a policy statement, so it names licences the current tree does not happen to
+# contain. Without this, cargo-deny warns about each one and the gate output stops being pristine —
+# and output nobody reads is output that hides a real finding.
+unused-allowed-license = "allow"
+
+[bans]
+# Two versions of the same crate in one binary is duplicated compile time, duplicated attack surface
+# and duplicated maintenance. Denied while the tree is small enough for that to be realistic — when
+# the storage and search layers land, a duplicate that genuinely cannot be resolved gets a `skip`
+# entry with its reason, and stays visible instead of accumulating silently.
+multiple-versions = "deny"
+# A wildcard version constraint is not a constraint.
+wildcards = "deny"
+allow-wildcard-paths = true
+skip = []
+deny = []
+
+[sources]
+# Everything comes from the one registry. A git dependency has no version, no yank mechanism and no
+# advisory coverage, so it is not admissible without an explicit entry here.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
