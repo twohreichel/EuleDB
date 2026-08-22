@@ -378,11 +378,11 @@ candidates named, decision deferred to the phase that needs it.
 | L0 | Key derivation | `argon2` | set | Argon2id, AC-20 |
 | L1 | Key index | Lance-native scalar index | set | decided at P1, see below. The Adaptive Radix Tree it replaces is recorded under § Decisions taken |
 | L1 | Predicate sets | `roaring` | set | the official roaring-rs port, AC-26 |
-| L1 | Vector index (HNSW) | Lance-native, else `hnsw_rs` / `hnswlib-rs` / `rust-cv/hnsw` | evaluate | **check Lance's own vector index first** — it already ships IVF-PQ, so an extra crate may be unnecessary |
+| L1 | Vector index (HNSW) | Lance-native | set | decided at the P2 cut: it ships HNSW with cosine as well as IVF-PQ, so an extra crate is unnecessary. See § Decisions taken |
 | L1 | Vector index (IVF-PQ) | Lance-native | set | AC-35 |
 | L1 | Full text | `tantivy` | set | BM25 as in Lucene, stemming for 17 Latin languages, <10 ms startup |
 | L1 | Embedding model | `intfloat/multilingual-e5-small` | set | 384 dim, 100 languages, 512 tokens, 12 layers |
-| L1 | Inference runtime | `ort` or `candle` | evaluate | **consequential, see § Open questions** — `ort` binds native ONNX Runtime (op coverage, speed) but complicates aarch64 cross-compilation; `candle` is pure Rust (simple builds) with narrower op coverage |
+| L1 | Inference runtime | `candle-onnx` | set | decided at SUB-28 on supply-chain grounds and confirmed by running the graph. See § Decisions taken |
 | L2 | Fusion | own RRF, k = 60 | set | no crate needed, AC-37 |
 | L3 | IR serialisation | `serde` | set | AC-40 |
 | L3 | Model runtime | llama.cpp (GGUF) everywhere; platform accelerators optional | set | AC-47 |
@@ -417,6 +417,34 @@ Two consequences that are easy to get wrong:
   device-specific behaviour this section removes.
 
 ### Decisions taken
+
+**The inference runtime is `candle-onnx`** (decided 2026-08-22, at SUB-28). The choice was framed as op
+coverage against build complexity. What actually decided it is supply chain: **`ort`'s default features
+download a prebuilt C++ ONNX Runtime at build time over TLS**, and that artefact sits outside every gate
+this project has — `cargo-deny` inspects Rust crates, and CI pins third-party actions to commit SHAs
+precisely so that no unverified mutable artefact enters a build. Using `ort` without that feature instead
+requires a native ONNX Runtime installed on every developer machine and all four CI platforms, which is a
+much heavier operational burden than the one build tool already required. `ort` 2.0 is also still a release
+candidate, and the embedding path is not the place for one.
+
+The op-coverage worry was settled by measurement rather than argument: `candle-onnx` loads this exact graph
+and returns `last_hidden_state` with shape `[1, n, 384]`. It needs `protoc`, which the on-disk format
+already requires, so the build-time cost is one this project pays anyway.
+
+**Two costs, both recorded.** The dependency tree grows by about 195 crates against `ort`'s 51 — seven new
+duplicate-version entries were added to `deny.toml` with reasons, and one duplicate (`tokenizers`) was
+*removed* by aligning the declaration to what `candle-core` already uses rather than skipped. And the
+**minimum supported Rust version rises from 1.91.0 to 1.94.0**: `candle-core` declares no `rust-version`
+while using an unstable feature on aarch64, so its requirement was measured — 1.93.0 fails, 1.94.0 builds.
+The MSRV was always derived from what dependencies need rather than chosen, so this is the same rule
+applied to a dependency that does not declare its own.
+
+**Mean pooling, not the leading token** (noted at SUB-28). E5 is trained with mean pooling, and pooling the
+first token instead produces vectors that are stable, cheap and not the model's. No shape, normalisation,
+prefix or determinism assertion can tell the difference — only retrieval can, which is why the pipeline's
+test set includes a semantic one: a query must sit measurably closer to the passage answering it than to an
+unrelated passage.
+
 
 **The vector indices are the format's too** (decided 2026-08-22, at the P2 cut). The pinned format ships
 HNSW with an `m` parameter and cosine distance, plus `IvfPq`, `IvfHnswPq` and `IvfRq`. AC-34 and AC-35
@@ -592,15 +620,15 @@ belongs. Those numbers assume the chosen crates hold up and the UX scope does no
 
 ### Open questions
 
-- **`ort` vs `candle` as the ONNX runtime.** Consequential because the AC-11 matrix now spans four
-  platforms: `ort` binds a native ONNX Runtime build, which must exist for linux-aarch64 and Windows;
-  `candle` is pure Rust and sidesteps that entirely, but may lack ops the E5 graph needs. Decide by building the E5 graph on both against AC-33, at the start of P2. Not
-  blocking earlier.
-- **Which reference corpus grounds AC-2, AC-3, AC-4?** It must be multilingual, redistributable, and
-  fixed before the first benchmark is recorded. Blocking for AC-5, not for P0.
+- ~~**`ort` vs `candle` as the ONNX runtime.**~~ **Closed 2026-08-22** — `candle-onnx`, on supply-chain
+  grounds and confirmed by running the graph. See § Decisions taken.
+- ~~**Which reference corpus grounds AC-2, AC-3, AC-4?**~~ **Closed 2026-08-22** — a fixed window of the
+  dated `20231101` Wikipedia snapshot in four languages, documented with its licence and digest in
+  `corpus/README.md`.
 - **Which natural-language benchmark set grounds AC-48 and AC-50?** Blocking for P3 only.
-- **Does Lance's own vector index remove the need for a separate HNSW crate?** Measure at P2 before
-  adding a dependency.
+- ~~**Does Lance's own vector index remove the need for a separate HNSW crate?**~~ **Closed 2026-08-22** —
+  it does: the format ships HNSW with cosine as well as IVF-PQ. Revisit only if a measurement at SUB-30
+  shows it cannot meet AC-34.
 - **The MSRV has no value yet.** AC-11 verifies against "the MSRV pinned in `rust-toolchain.toml`", but
   no version is chosen. It cannot be picked freely: it is the maximum of what `lance`, `tantivy`,
   `arrow-rs` and `aes-gcm` require. Determine it in SUB-2 by reading their manifests, not by guessing.
