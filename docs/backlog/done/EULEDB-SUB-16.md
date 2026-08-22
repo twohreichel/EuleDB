@@ -7,7 +7,8 @@ size: L
 context_budget: 3000
 safety: hardens existing paths, and makes a previously unenforced rule enforced
 detail: full
-status: in-progress
+status: done
+pr: https://github.com/twohreichel/EuleDB/pull/16
 ---
 
 ## Goal
@@ -101,9 +102,9 @@ cargo nextest run -p euledb-storage -E 'binary(concurrency)'
 
 ## Definition of Done
 
-- [ ] AC-69 covered: killed at five points, whole commits only, readable each time, and the test proven
+- [x] AC-69 covered: killed at five points, whole commits only, readable each time, and the test proven
       non-vacuous
-- [ ] AC-70 covered: a second writer refused by name, readers unblocked, a reader's write refused by name
-- [ ] The model documented on the public API and on the crate's registry page
-- [ ] A killed writer proven not to lock the database out
-- [ ] The fixture crate explicitly unpublished, and the distinction made mechanical
+- [x] AC-70 covered: a second writer refused by name, readers unblocked, a reader's write refused by name
+- [x] The model documented on the public API and on the crate's registry page
+- [x] A killed writer proven not to lock the database out
+- [x] The fixture crate explicitly unpublished, and the distinction made mechanical
