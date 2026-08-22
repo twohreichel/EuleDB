@@ -13,6 +13,16 @@ const LOG_FILE: &str = ".euledb-audit.log";
 /// How long a link is. SHA-256, so 32 bytes.
 const HASH_LEN: usize = 32;
 
+/// What a record's predecessor is when it starts a chain rather than continuing one.
+const ANCHOR: [u8; HASH_LEN] = [0_u8; HASH_LEN];
+
+/// The prefix that marks a record as a deliberate new anchor rather than a broken link.
+///
+/// A record whose predecessor is the anchor value is legitimate only at the very start of the log or
+/// when it says so. Without the marker, breaking a chain and appending a fresh anchor would be
+/// indistinguishable from a clean log.
+const REANCHOR: &str = "re-anchor after broken link ";
+
 /// One entry: what was asked, how it resolved, what it touched, and the link to the entry before it.
 ///
 /// **What is deliberately absent:** the rows. An audit log that copies the data it describes is a second
@@ -62,6 +72,26 @@ impl AuditRecord {
     #[must_use]
     pub const fn previous(&self) -> &[u8; HASH_LEN] {
         &self.previous
+    }
+
+    /// A record with its own hash already computed.
+    fn sealed(
+        sequence: u64,
+        previous: [u8; HASH_LEN],
+        query: String,
+        plan: String,
+        rows: u64,
+    ) -> Self {
+        let mut record = Self {
+            sequence,
+            previous,
+            query,
+            plan,
+            rows,
+            hash: ANCHOR,
+        };
+        record.hash = record.recompute();
+        record
     }
 
     /// The link this record's content produces.
@@ -251,20 +281,35 @@ impl AuditLog {
         file.read_to_string(&mut raw)
             .map_err(|cause| AuditError::unavailable(&self.path, cause))?;
         let existing = parse(&raw)?;
+
+        // Fail closed. A log that keeps accepting entries after it has been tampered with is worse than
+        // no log, because it still looks trustworthy.
+        if let Some(at) = Self::first_break(&existing) {
+            return Err(AuditError::BrokenChain { at });
+        }
+
         let (sequence, previous) = existing
             .last()
-            .map_or((0, [0_u8; HASH_LEN]), |last| (last.sequence + 1, last.hash));
+            .map_or((0, ANCHOR), |last| (last.sequence + 1, last.hash));
+        let record =
+            AuditRecord::sealed(sequence, previous, query.to_owned(), plan.to_owned(), rows);
 
-        let mut record = AuditRecord {
-            sequence,
-            previous,
-            query: query.to_owned(),
-            plan: plan.to_owned(),
-            rows,
-            hash: [0_u8; HASH_LEN],
-        };
-        record.hash = record.recompute();
+        file.write_all(record.to_line().as_bytes())
+            .map_err(|cause| AuditError::unavailable(&self.path, cause))?;
+        file.flush()
+            .map_err(|cause| AuditError::unavailable(&self.path, cause))
+    }
 
+    /// Append one already-sealed record, taking the same short lock.
+    fn write(&self, record: &AuditRecord) -> Result<(), AuditError> {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .append(true)
+            .open(&self.path)
+            .map_err(|cause| AuditError::unavailable(&self.path, cause))?;
+        file.lock()
+            .map_err(|cause| AuditError::unavailable(&self.path, cause))?;
         file.write_all(record.to_line().as_bytes())
             .map_err(|cause| AuditError::unavailable(&self.path, cause))?;
         file.flush()
@@ -284,6 +329,80 @@ impl AuditLog {
             Err(cause) => return Err(AuditError::unavailable(&self.path, cause)),
         };
         parse(&raw)
+    }
+
+    /// Walk the chain and report the first link that does not hold.
+    ///
+    /// Three things break a link: a record whose content no longer produces its own hash, a record that
+    /// does not name its predecessor, and a record that anchors a chain in the middle of the log without
+    /// saying it is a re-anchor.
+    ///
+    /// # Errors
+    ///
+    /// [`AuditError::BrokenChain`] naming the **first** broken link's sequence number — the number an
+    /// operator acts on, so an off-by-one here is a real defect. Also the read failures of
+    /// [`AuditLog::records`].
+    pub fn verify(&self) -> Result<(), AuditError> {
+        let records = self.records()?;
+        Self::first_break(&records).map_or(Ok(()), |at| Err(AuditError::BrokenChain { at }))
+    }
+
+    /// The records of the chain currently being appended to.
+    ///
+    /// A log is a **sequence** of chains, not one: re-anchoring after a break starts a new one and leaves
+    /// everything before it in the file, because a recovery that erased the damage would be the one thing
+    /// an audit log must never do. So the question "does the chain verify" is about the current chain,
+    /// and the break that ended the previous one is recorded by the re-anchor itself.
+    fn current_chain(records: &[AuditRecord]) -> &[AuditRecord] {
+        records
+            .iter()
+            .rposition(|record| record.query.starts_with(REANCHOR))
+            .map_or(records, |anchor| &records[anchor..])
+    }
+
+    /// The sequence number of the first record of the current chain that does not follow the one before.
+    fn first_break(records: &[AuditRecord]) -> Option<u64> {
+        let chain = Self::current_chain(records);
+        let mut expected_previous = ANCHOR;
+        for (position, record) in chain.iter().enumerate() {
+            let placed_wrong = if position == 0 {
+                // The chain's own first record anchors it, whether it is the file's first or a re-anchor.
+                record.previous != ANCHOR
+            } else {
+                record.previous != expected_previous
+            };
+
+            if placed_wrong || record.hash != record.recompute() {
+                return Some(record.sequence);
+            }
+            expected_previous = record.hash;
+        }
+        None
+    }
+
+    /// Start a new chain after a break, recording which link was broken.
+    ///
+    /// The evidence is not removed: everything before the break stays in the file, and the anchor names
+    /// the link it is anchoring past. A recovery that erased the damage would be the one thing an audit
+    /// log must never do.
+    ///
+    /// # Errors
+    ///
+    /// [`AuditError::NothingToReanchor`] when the chain verifies — re-anchoring a sound log would
+    /// obscure it for nothing. Otherwise the write failures of [`AuditLog::append`].
+    pub fn reanchor(&self) -> Result<(), AuditError> {
+        let records = self.records()?;
+        let Some(at) = Self::first_break(&records) else {
+            return Err(AuditError::NothingToReanchor);
+        };
+        let next = records.last().map_or(0, |last| last.sequence + 1);
+        self.write(&AuditRecord::sealed(
+            next,
+            ANCHOR,
+            format!("{REANCHOR}{at}"),
+            String::new(),
+            0,
+        ))
     }
 
     /// Whether the file exists at all.
@@ -306,6 +425,17 @@ pub enum AuditError {
         /// and keeping it would put std's error in this crate's public API for nothing.
         cause: String,
     },
+
+    /// A link in the chain does not follow from the one before it.
+    #[error("the audit log's chain breaks at link {at}")]
+    BrokenChain {
+        /// The sequence number of the first record that does not hold — the number to act on.
+        at: u64,
+    },
+
+    /// Re-anchoring was asked for on a log whose chain verifies.
+    #[error("the audit log verifies, so there is nothing to re-anchor")]
+    NothingToReanchor,
 
     /// A line in the log is not a record.
     #[error("the audit log holds a line that is not a record: {reason}")]
