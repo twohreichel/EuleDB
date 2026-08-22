@@ -7,7 +7,8 @@ size: L
 context_budget: 3000
 safety: additive API — the existing insert and scan paths are unchanged
 detail: full
-status: in-progress
+status: done
+pr: https://github.com/twohreichel/EuleDB/pull/15
 ---
 
 ## Goal
@@ -104,8 +105,8 @@ commits a manifest, exercising the encrypting layer's write path as well as its 
 
 ## Definition of Done
 
-- [ ] AC-67 covered: matching rows updated, non-matching untouched, values present after a reopen
-- [ ] AC-68 covered: exactly the matching rows removed, count reported, count and predicate logged first
-- [ ] The announcement asserted from a real subscriber, not assumed
-- [ ] Every mutation of the path either caught or shown to be semantically equivalent
-- [ ] Mutations proven to work on an encrypted table as well as a plaintext one
+- [x] AC-67 covered: matching rows updated, non-matching untouched, values present after a reopen
+- [x] AC-68 covered: exactly the matching rows removed, count reported, count and predicate logged first
+- [x] The announcement asserted from a real subscriber, not assumed
+- [x] Every mutation of the path either caught or shown to be semantically equivalent
+- [x] Mutations proven to work on an encrypted table as well as a plaintext one
