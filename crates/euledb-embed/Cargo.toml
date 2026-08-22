@@ -1,0 +1,22 @@
+[package]
+name = "euledb-embed"
+description = "Embeddings for EuleDB: the multilingual-e5-small ONNX graph, run locally. Not published while the model fetch is a documented step rather than a dependency."
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+candle-core.workspace = true
+candle-onnx.workspace = true
+thiserror.workspace = true
+tokenizers.workspace = true
+
+[dev-dependencies]
+euledb-corpus.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true
