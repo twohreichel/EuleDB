@@ -418,6 +418,27 @@ Two consequences that are easy to get wrong:
 
 ### Decisions taken
 
+**The format's HNSW is IVF-partitioned and has no separate base-layer parameter** (measured 2026-08-22, at
+SUB-30). AC-34 asks for HNSW with `M` in 12..16, `M0 = 2*M` and cosine. Two of the three are honoured:
+`m = 16` and cosine. The other cannot be — this format offers HNSW only *inside* an IVF partitioning, and
+its build parameters are `max_level`, `m`, `ef_construction` and a prefetch distance, with no distinct
+connectivity for the bottom layer. `M0` therefore has nothing to be set to.
+
+One IVF partition is used, because this is the small-and-mid-size collection the criterion names and
+partitioning would push a query into the wrong partition more often than it would save.
+
+**Cosine and L2 are not distinguishable here, and that is arithmetic rather than a gap in the tests.** Every
+stored vector is L2-normalised, and for unit vectors squared Euclidean distance is `2 - 2·cosine` — a
+strictly decreasing function of it, so the two produce the *identical ranking*. A mutation swapping them
+survives every assertion and always will. Cosine is set because it is the correct label for normalised
+vectors, not because a test can tell.
+
+**An answer alone cannot show that a vector index exists.** With a small collection an exhaustive
+comparison returns exactly what the index returns, so a mutation that never builds the index passes every
+assertion about neighbours. The plan is read instead, which is the same lesson as the scalar index: for
+anything whose point is *how* an answer was reached, the answer is not evidence.
+
+
 **The inference runtime is `tract-onnx`** (decided 2026-08-22, at SUB-28, after two candidates were
 disproven). The open question framed this as op coverage against build complexity. Neither turned out to
 decide it.

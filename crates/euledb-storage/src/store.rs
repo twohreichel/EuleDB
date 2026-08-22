@@ -599,6 +599,175 @@ impl LanceStore {
         Ok(vectors)
     }
 
+    /// Build a vector index over an auto-embedding column's vectors.
+    ///
+    /// HNSW with `m = 16` and cosine distance, over one IVF partition.
+    ///
+    /// **Two things worth knowing before reading the parameters.** This format's HNSW exists only *inside*
+    /// an IVF partitioning — there is no standalone graph — and its build parameters are `max_level`, `m`,
+    /// `ef_construction` and a prefetch distance. There is **no separate base-layer connectivity**, so a
+    /// distinct value for the bottom layer cannot be set at all.
+    ///
+    /// One partition, because this is the small-and-mid-size case: IVF over several partitions would push
+    /// a query into the wrong one far more often than it would save.
+    ///
+    /// # Errors
+    ///
+    /// Reports the failure when the column has no vectors to index, or when the index cannot be built.
+    pub async fn create_vector_index(&self, table: &str, column: &str) -> crate::Result<()> {
+        self.require_scope(Scope::Schema, table)?;
+        self.require_write_role("index the vectors of", table)?;
+
+        let companion = Self::vector_table(table, column);
+        let mut dataset = self.open(&companion).await?;
+
+        // One partition: this is the small-and-mid-size case the criterion names, and IVF over a
+        // handful of partitions would push a query into the wrong one far more often than it would save.
+        let ivf = lance_index::vector::ivf::IvfBuildParams::new(1);
+        // Sixteen connections: the top of the range this project documents. More costs memory and buys
+        // recall, and recall is what an index is for.
+        let hnsw = lance_index::vector::hnsw::builder::HnswBuildParams {
+            m: 16,
+            ..lance_index::vector::hnsw::builder::HnswBuildParams::default()
+        };
+        let quantizer = lance_index::vector::sq::builder::SQBuildParams::default();
+        let params = lance::index::vector::VectorIndexParams::with_ivf_hnsw_sq_params(
+            lance_linalg::distance::DistanceType::Cosine,
+            ivf,
+            hnsw,
+            quantizer,
+        );
+
+        Box::pin(dataset.create_index(
+            &["embedding"],
+            lance_index::IndexType::Vector,
+            None,
+            &params,
+            true,
+        ))
+        .await
+        .map_err(|cause| StorageError::backend("index the vectors of", table, cause))?;
+        self.record(&format!("index the vectors of `{table}`.`{column}`"), "", 0)
+    }
+
+    /// The nearest vectors to a query, in order of similarity.
+    ///
+    /// # Errors
+    ///
+    /// Reports the failure when the column has no vectors, when the query is the wrong width, or when
+    /// the search cannot be run.
+    pub async fn nearest(
+        &self,
+        table: &str,
+        column: &str,
+        query: &[f32],
+        limit: usize,
+    ) -> crate::Result<Vec<crate::RowVector>> {
+        self.require_scope(Scope::Read, table)?;
+        if query.len() != crate::VECTOR_WIDTH {
+            return Err(StorageError::WrongVectorWidth {
+                given: query.len(),
+                wanted: crate::VECTOR_WIDTH,
+            }
+            .into());
+        }
+
+        let companion = Self::vector_table(table, column);
+        let dataset = self.open(&companion).await?;
+        let mut scanner = dataset.scan();
+        let key = arrow_array::Float32Array::from(query.to_vec());
+        scanner
+            .nearest("embedding", &key, limit)
+            .map_err(|cause| StorageError::backend("search the vectors of", table, cause))?;
+
+        let batches = scanner
+            .try_into_stream()
+            .await
+            .map_err(|cause| StorageError::backend("start a search of", table, cause))?
+            .try_collect::<Vec<RecordBatch>>()
+            .await
+            .map_err(|cause| StorageError::backend("read the search results of", table, cause))?;
+
+        let mut found = Vec::new();
+        for batch in &batches {
+            let rows = batch
+                .column_by_name("row")
+                .and_then(|c| c.as_any().downcast_ref::<arrow_array::UInt64Array>())
+                .ok_or_else(|| {
+                    StorageError::backend("read the search results of", table, "no row column")
+                })?;
+            let chunks = batch
+                .column_by_name("chunk")
+                .and_then(|c| c.as_any().downcast_ref::<arrow_array::UInt32Array>())
+                .ok_or_else(|| {
+                    StorageError::backend("read the search results of", table, "no chunk column")
+                })?;
+            let embeddings = batch
+                .column_by_name("embedding")
+                .and_then(|c| c.as_any().downcast_ref::<arrow_array::FixedSizeListArray>())
+                .ok_or_else(|| {
+                    StorageError::backend(
+                        "read the search results of",
+                        table,
+                        "no embedding column",
+                    )
+                })?;
+            for index in 0..batch.num_rows() {
+                let values = embeddings.value(index);
+                let floats = values
+                    .as_any()
+                    .downcast_ref::<arrow_array::Float32Array>()
+                    .ok_or_else(|| {
+                        StorageError::backend("read the search results of", table, "not f32")
+                    })?;
+                found.push(crate::RowVector {
+                    row: RowId::new(rows.value(index)),
+                    chunk: chunks.value(index),
+                    embedding: floats.values().to_vec(),
+                });
+            }
+        }
+        self.record(
+            &format!("search the vectors of `{table}`.`{column}`"),
+            "",
+            u64::try_from(found.len()).unwrap_or(u64::MAX),
+        )?;
+        Ok(found)
+    }
+
+    /// Whether a nearest-neighbour search would go through the vector index.
+    ///
+    /// **A diagnostic, and the only way to tell.** With a small collection an exhaustive comparison
+    /// returns exactly what the index returns, so no assertion on the *answers* can show that an index
+    /// was used at all — a test that only checks the neighbours passes with no index built. This reads
+    /// the plan instead.
+    ///
+    /// # Errors
+    ///
+    /// As [`LanceStore::nearest`], plus the failure when the plan cannot be explained.
+    pub async fn nearest_uses_the_index(
+        &self,
+        table: &str,
+        column: &str,
+        query: &[f32],
+        limit: usize,
+    ) -> crate::Result<bool> {
+        self.require_scope(Scope::Read, table)?;
+        let companion = Self::vector_table(table, column);
+        let dataset = self.open(&companion).await?;
+        let mut scanner = dataset.scan();
+        let key = arrow_array::Float32Array::from(query.to_vec());
+        scanner
+            .nearest("embedding", &key, limit)
+            .map_err(|cause| StorageError::backend("search the vectors of", table, cause))?;
+
+        let plan = Box::pin(scanner.explain_plan(true))
+            .await
+            .map_err(|cause| StorageError::backend("explain the search of", table, cause))?;
+        // The index contributes its own plan node. A flat comparison of every vector does not.
+        Ok(plan.contains("ANNSubIndex") || plan.contains("ANNIvfPartition"))
+    }
+
     /// Bring a column's vectors back into agreement with its text.
     ///
     /// **Reconciliation rather than incremental bookkeeping**, and deliberately so: a row whose text
@@ -1063,6 +1232,19 @@ pub enum StorageError {
         operation: &'static str,
         /// The table it was aimed at.
         table: String,
+    },
+
+    /// A query vector is not the width the stored vectors are.
+    ///
+    /// Its own variant rather than a backend failure: nothing below was asked anything. A vector of the
+    /// wrong length cannot be compared to anything, and saying so with both numbers is the difference
+    /// between a usable message and "could not search".
+    #[error("a query vector of {given} components cannot be compared to vectors of {wanted}")]
+    WrongVectorWidth {
+        /// What the caller supplied.
+        given: usize,
+        /// What the stored vectors are.
+        wanted: usize,
     },
 
     /// The handle has no token for what was asked.
