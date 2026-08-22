@@ -29,7 +29,7 @@ mod store;
 mod writer_lock;
 
 pub use compression::{Compression, InvalidZstdLevel, ZstdLevel};
-pub use crypto::{DataKeyId, Keyring, KeyringError};
+pub use crypto::{Capability, DataKeyId, Keyring, KeyringError, Scope};
 pub use definition::TableDefinition;
 pub use error::{Error, Result};
 pub use measurement::{Measured, Order, RowId, RowIdSet, RowsExamined};
