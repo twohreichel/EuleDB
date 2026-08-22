@@ -6,9 +6,9 @@ depends_on: [EULEDB-SUB-16]
 size: M
 context_budget: 3000
 safety: defines the surface every later ticket returns through
-detail: done
+detail: full
 status: done
-branch: feature/EULEDB/SUB-17-error-type
+pr: https://github.com/twohreichel/EuleDB/pull/17
 ---
 
 ## Goal
