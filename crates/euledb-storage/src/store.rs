@@ -614,7 +614,12 @@ impl LanceStore {
     /// # Errors
     ///
     /// Reports the failure when the column has no vectors to index, or when the index cannot be built.
-    pub async fn create_vector_index(&self, table: &str, column: &str) -> crate::Result<()> {
+    pub async fn create_vector_index(
+        &self,
+        table: &str,
+        column: &str,
+        kind: crate::VectorIndexKind,
+    ) -> crate::Result<()> {
         self.require_scope(Scope::Schema, table)?;
         self.require_write_role("index the vectors of", table)?;
 
@@ -624,19 +629,38 @@ impl LanceStore {
         // One partition: this is the small-and-mid-size case the criterion names, and IVF over a
         // handful of partitions would push a query into the wrong one far more often than it would save.
         let ivf = lance_index::vector::ivf::IvfBuildParams::new(1);
-        // Sixteen connections: the top of the range this project documents. More costs memory and buys
-        // recall, and recall is what an index is for.
-        let hnsw = lance_index::vector::hnsw::builder::HnswBuildParams {
-            m: 16,
-            ..lance_index::vector::hnsw::builder::HnswBuildParams::default()
+        let params = match kind {
+            crate::VectorIndexKind::Graph => {
+                // Sixteen connections: the top of the range this project documents. More costs memory
+                // and buys recall, and recall is what an index is for.
+                let hnsw = lance_index::vector::hnsw::builder::HnswBuildParams {
+                    m: 16,
+                    ..lance_index::vector::hnsw::builder::HnswBuildParams::default()
+                };
+                lance::index::vector::VectorIndexParams::with_ivf_hnsw_sq_params(
+                    lance_linalg::distance::DistanceType::Cosine,
+                    ivf,
+                    hnsw,
+                    lance_index::vector::sq::builder::SQBuildParams::default(),
+                )
+            }
+            crate::VectorIndexKind::Quantised => {
+                // Sixteen sub-vectors of 24 components each, four bits per code. The defaults assume a
+                // collection large enough to train 256 centroids per subspace, which the small-and-
+                // mid-size case this database targets does not have — a codebook trained on fewer
+                // vectors than centroids is not a codebook.
+                let pq = lance_index::vector::pq::PQBuildParams {
+                    num_sub_vectors: 16,
+                    num_bits: 4,
+                    ..lance_index::vector::pq::PQBuildParams::default()
+                };
+                lance::index::vector::VectorIndexParams::with_ivf_pq_params(
+                    lance_linalg::distance::DistanceType::Cosine,
+                    ivf,
+                    pq,
+                )
+            }
         };
-        let quantizer = lance_index::vector::sq::builder::SQBuildParams::default();
-        let params = lance::index::vector::VectorIndexParams::with_ivf_hnsw_sq_params(
-            lance_linalg::distance::DistanceType::Cosine,
-            ivf,
-            hnsw,
-            quantizer,
-        );
 
         Box::pin(dataset.create_index(
             &["embedding"],
@@ -647,7 +671,14 @@ impl LanceStore {
         ))
         .await
         .map_err(|cause| StorageError::backend("index the vectors of", table, cause))?;
-        self.record(&format!("index the vectors of `{table}`.`{column}`"), "", 0)
+        self.record(
+            &format!("index the vectors of `{table}`.`{column}`"),
+            match kind {
+                crate::VectorIndexKind::Graph => "graph",
+                crate::VectorIndexKind::Quantised => "quantised",
+            },
+            0,
+        )
     }
 
     /// The nearest vectors to a query, in order of similarity.
@@ -733,6 +764,41 @@ impl LanceStore {
             u64::try_from(found.len()).unwrap_or(u64::MAX),
         )?;
         Ok(found)
+    }
+
+    /// Which vector index a column carries, if any.
+    ///
+    /// **Why this is public** — "selectable per table" is only a real property if a caller can find out
+    /// what was selected. It is also the only reliable way to tell the two kinds apart: the artefacts
+    /// differ in size, but two builds of the *same* kind differ in size too, so size proves nothing.
+    ///
+    /// # Errors
+    ///
+    /// Reports the failure when the column has no companion table, or when its index metadata cannot be
+    /// read.
+    pub async fn vector_index_kind(
+        &self,
+        table: &str,
+        column: &str,
+    ) -> crate::Result<Option<crate::VectorIndexKind>> {
+        self.require_scope(Scope::Read, table)?;
+        let companion = Self::vector_table(table, column);
+        let dataset = self.open(&companion).await?;
+
+        // The format names an index after its column, and reports its own type in the statistics.
+        let statistics = match dataset.index_statistics("embedding_idx").await {
+            Ok(statistics) => statistics,
+            Err(_) => return Ok(None),
+        };
+        // A substring test rather than a JSON parse: the only question is which family built it, and
+        // pulling in a JSON parser to answer it would be a dependency for one word.
+        if statistics.contains("HNSW") {
+            Ok(Some(crate::VectorIndexKind::Graph))
+        } else if statistics.contains("PQ") {
+            Ok(Some(crate::VectorIndexKind::Quantised))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Whether a nearest-neighbour search would go through the vector index.

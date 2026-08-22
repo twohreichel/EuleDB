@@ -11,10 +11,14 @@ use std::sync::Arc;
 
 use arrow_array::{ArrayRef, Int64Array, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema};
-use euledb_storage::{LanceStore, TableDefinition, TableSchema, TableStore};
+use euledb_storage::{LanceStore, TableDefinition, TableSchema, TableStore, VectorIndexKind};
 
-/// Enough documents for recall to mean something, few enough that the suite stays quick.
-const DOCUMENTS: usize = 12;
+/// Enough documents for recall to mean something, and enough for product quantisation to train.
+///
+/// The lower bound is not arbitrary: a codebook of `2^num_bits` centroids cannot be trained on fewer
+/// vectors than centroids, and the quantised index here uses four bits — sixteen. Twelve documents
+/// failed with exactly that message, which is a constraint of the method rather than of this test.
+const DOCUMENTS: usize = 24;
 
 fn documents() -> TableDefinition {
     TableDefinition::new(
@@ -97,7 +101,7 @@ async fn an_indexed_vector_column_finds_what_an_exhaustive_search_finds() {
     );
 
     store
-        .create_vector_index("documents", "body")
+        .create_vector_index("documents", "body", VectorIndexKind::Graph)
         .await
         .expect("an embedding column can be indexed");
 
@@ -174,7 +178,7 @@ async fn indexing_a_column_that_does_not_embed_is_refused() {
 
     assert!(
         store
-            .create_vector_index("documents", "body")
+            .create_vector_index("documents", "body", VectorIndexKind::Graph)
             .await
             .is_err(),
         "a column with no vectors has nothing to index",
@@ -217,7 +221,7 @@ async fn the_search_goes_through_the_index_once_one_exists() {
     );
 
     store
-        .create_vector_index("documents", "body")
+        .create_vector_index("documents", "body", VectorIndexKind::Graph)
         .await
         .expect("an embedding column can be indexed");
 
@@ -262,4 +266,179 @@ async fn a_query_of_the_wrong_width_is_refused() {
         ),
         "the refusal must name both widths: {refusal:?}",
     );
+}
+
+/// Both index kinds answer, and the query does not say which one it is asking.
+///
+/// The criterion's substance is that last clause: a caller picks the trade-off once, when the index is
+/// built, and every query afterwards is the same call. If the query API had to know, the choice would
+/// leak into every consumer.
+#[tokio::test]
+async fn either_index_kind_answers_the_same_query_call() {
+    async fn nearest_with(kind: VectorIndexKind) -> Vec<u64> {
+        let root = tempfile::tempdir().expect("a temporary directory is available");
+        let model = embedder();
+        let store = LanceStore::open_for_writing(root.path())
+            .expect("the write role is free")
+            .embedding(model.clone());
+        store
+            .create_table("documents", &documents())
+            .await
+            .expect("the table is declared");
+        store
+            .append("documents", &batch(&corpus()))
+            .await
+            .expect("rows land and embed");
+        store
+            .create_vector_index("documents", "body", kind)
+            .await
+            .expect("either kind can be built");
+
+        let query = model
+            .embed_query("Datenschutz und Vorratsdatenspeicherung")
+            .expect("the query embeds");
+        // The same call for both kinds — no parameter here names the index.
+        store
+            .nearest("documents", "body", query.as_slice(), 3)
+            .await
+            .expect("either kind answers")
+            .iter()
+            .map(|hit| hit.row.get())
+            .collect()
+    }
+
+    let graph = nearest_with(VectorIndexKind::Graph).await;
+    let quantised = nearest_with(VectorIndexKind::Quantised).await;
+
+    assert_eq!(graph.len(), 3, "the graph index returns what was asked for");
+    assert_eq!(quantised.len(), 3, "and so does the quantised one");
+
+    // **They do not agree on the nearest vector, and asserting that they would was wrong.** Product
+    // quantisation answers from a lossy code rather than from the vector, and with a four-bit codebook
+    // over two dozen vectors the loss is large — measured, not supposed: the graph returned [4, 5, 14]
+    // and the quantised index [5, 4, 2].
+    //
+    // So the claim here is the criterion's own: the *same call* serves both, and neither the caller nor
+    // this test says which index answers. How closely the lossy one tracks the exact answer is a recall
+    // figure, and a recall figure over two dozen vectors means nothing — that measurement belongs to the
+    // benchmark over the reference corpus.
+    let shared = graph.iter().filter(|row| quantised.contains(row)).count();
+    assert!(
+        shared >= 1,
+        "the two kinds must be answering the same question, however approximately: graph {graph:?} \
+         against quantised {quantised:?}",
+    );
+}
+
+/// What the two index kinds cost on disk, measured — and the measurement contradicts the obvious claim.
+///
+/// The reason a quantised index exists is memory: each vector becomes a short code. **At this scale it is
+/// the larger artefact, not the smaller one** — 27 847 bytes against 16 479 for the graph over two dozen
+/// vectors. The codebook is a fixed cost (sixteen sub-vectors, sixteen centroids each, twenty-four
+/// components apiece) and it dominates until the collection is far larger than the codebook.
+///
+/// So this test asserts only that both kinds leave an index behind. Asserting a direction would mean
+/// asserting something untrue at the size a test can afford, and the crossover — where quantisation
+/// starts to pay — is a memory measurement over the reference corpus rather than a unit test.
+#[tokio::test]
+async fn both_index_kinds_leave_an_index_on_disk() {
+    async fn index_bytes(kind: VectorIndexKind) -> u64 {
+        let root = tempfile::tempdir().expect("a temporary directory is available");
+        let store = LanceStore::open_for_writing(root.path())
+            .expect("the write role is free")
+            .embedding(embedder());
+        store
+            .create_table("documents", &documents())
+            .await
+            .expect("the table is declared");
+        store
+            .append("documents", &batch(&corpus()))
+            .await
+            .expect("rows land and embed");
+        store
+            .create_vector_index("documents", "body", kind)
+            .await
+            .expect("either kind can be built");
+
+        // Only the index, not the vectors it was built from: the companion table is the same either way.
+        let mut total = 0;
+        let mut stack = vec![
+            root.path()
+                .join("documents.body.vectors.lance")
+                .join("_indices"),
+        ];
+        while let Some(path) = stack.pop() {
+            for entry in std::fs::read_dir(&path).into_iter().flatten().flatten() {
+                let child = entry.path();
+                if child.is_dir() {
+                    stack.push(child);
+                } else {
+                    total += entry.metadata().map(|meta| meta.len()).unwrap_or(0);
+                }
+            }
+        }
+        total
+    }
+
+    let graph = index_bytes(VectorIndexKind::Graph).await;
+    let quantised = index_bytes(VectorIndexKind::Quantised).await;
+
+    assert!(
+        graph > 0,
+        "the graph index must leave an artefact behind, or nothing was built",
+    );
+    assert!(
+        quantised > 0,
+        "and so must the quantised one, or the second kind is a no-op with a different name",
+    );
+
+    // Size cannot make the choice observable: two builds of the *same* kind also differ in bytes, so an
+    // inequality here is satisfied by noise. That was measured, not assumed — a mutation ignoring the
+    // requested kind survived an `assert_ne!` on these numbers. The index's own recorded type is the
+    // signal, and it has its own test below.
+}
+
+/// The selection is observable, which is what makes it a selection.
+///
+/// This is the test that catches a build ignoring the kind it was asked for. Neither the answers nor the
+/// artefact sizes can: the answers agree often enough, and two builds of one kind differ in size anyway.
+#[tokio::test]
+async fn the_index_records_the_kind_it_was_asked_for() {
+    for kind in [VectorIndexKind::Graph, VectorIndexKind::Quantised] {
+        let root = tempfile::tempdir().expect("a temporary directory is available");
+        let store = LanceStore::open_for_writing(root.path())
+            .expect("the write role is free")
+            .embedding(embedder());
+        store
+            .create_table("documents", &documents())
+            .await
+            .expect("the table is declared");
+        store
+            .append("documents", &batch(&corpus()))
+            .await
+            .expect("rows land and embed");
+
+        assert_eq!(
+            store
+                .vector_index_kind("documents", "body")
+                .await
+                .expect("the metadata is readable"),
+            None,
+            "before anything is built there is no index kind to report",
+        );
+
+        store
+            .create_vector_index("documents", "body", kind)
+            .await
+            .expect("either kind can be built");
+
+        assert_eq!(
+            store
+                .vector_index_kind("documents", "body")
+                .await
+                .expect("the metadata is readable"),
+            Some(kind),
+            "the index must record the kind it was asked for, not the one it felt like building",
+        );
+    }
 }

@@ -38,3 +38,21 @@ pub struct RowVector {
     /// The vector itself, L2-normalised by the embedder.
     pub embedding: Vec<f32>,
 }
+
+/// Which vector index a column carries.
+///
+/// **Why a choice at all** — the two trade the same thing in opposite directions. The graph keeps every
+/// vector and walks between them, which is fast and holds the collection in memory. Product quantisation
+/// replaces each vector with a short code, which fits where memory is scarce and answers approximately
+/// from a lossy representation.
+///
+/// The query API does not change with the choice: a caller asks for the nearest vectors and does not say
+/// how they are found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VectorIndexKind {
+    /// A navigable graph over the vectors themselves. The default, for small and mid-size collections.
+    #[default]
+    Graph,
+    /// Product quantisation: each vector becomes a short code. For where memory is the constraint.
+    Quantised,
+}
