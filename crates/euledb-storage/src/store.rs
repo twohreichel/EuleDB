@@ -11,6 +11,7 @@ use arrow_array::{RecordBatch, RecordBatchIterator};
 use futures_util::TryStreamExt;
 
 use crate::crypto::{BlockSize, EncryptingProvider};
+use crate::writer_lock::{LockError, WriteLock};
 use crate::{Assignment, Compression, Deleted, Keyring, Predicate, TableDefinition, Updated};
 
 /// A cause from the layer below, kept as an opaque source.
@@ -66,11 +67,26 @@ pub trait TableStore {
 
 /// A store holding each table as a dataset under one directory.
 ///
-/// Constructing one touches no disk and creates nothing — a store is a location, not a handle, so it
-/// can be created and dropped freely. Reopening the same path sees what was written before.
+/// # The concurrency model
+///
+/// **Any number of readers, at most one writer, per database directory.**
+///
+/// - [`LanceStore::new`] opens for reading. It touches no disk, takes no lock, and never waits. Readers
+///   are unlimited and a writer does not block them.
+/// - [`LanceStore::open_for_writing`] takes the write role and holds it until the store is dropped. A
+///   second writer is **refused immediately** with [`StorageError::AlreadyOpenForWriting`] rather than
+///   queued: a local-first database that blocks forever on a lock held by a process nobody can see is
+///   worse than one that says so.
+/// - Calling a writing method on a reader is refused with [`StorageError::ReadOnly`].
+///
+/// The lock is advisory and lives with an open file handle, so it is released when the writer is dropped
+/// **and** when its process dies for any reason, including being killed. A marker file would outlive a
+/// crash and lock the database out permanently.
 #[derive(Debug, Clone)]
 pub struct LanceStore {
     root: PathBuf,
+    /// Present only on a store opened for writing. Holding it IS the write role.
+    write_lock: Option<Arc<WriteLock>>,
     /// Present when this store is encrypted. Carries the registry that resolves the encrypted URI
     /// scheme, which is how every byte gets routed through the cipher.
     session: Option<Arc<lance::session::Session>>,
@@ -82,8 +98,47 @@ impl LanceStore {
     pub fn new(root: impl AsRef<Path>) -> Self {
         Self {
             root: root.as_ref().to_path_buf(),
+            write_lock: None,
             session: None,
         }
+    }
+
+    /// Open the database for writing, taking the write role.
+    ///
+    /// Creates the directory if it does not exist, because a database is opened for writing before it
+    /// contains anything. The role is held until this store is dropped.
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError::AlreadyOpenForWriting`] when another writer holds it, immediately rather than
+    /// after a wait. [`StorageError::Backend`] when the lock cannot be established at all, which is a
+    /// filesystem or permission problem rather than contention.
+    pub fn open_for_writing(root: impl AsRef<Path>) -> Result<Self, StorageError> {
+        let root = root.as_ref().to_path_buf();
+        let lock = WriteLock::acquire(&root).map_err(|cause| match cause {
+            LockError::Busy { root } => StorageError::AlreadyOpenForWriting { root },
+            other => StorageError::backend(
+                "take the write lock for",
+                &root.display().to_string(),
+                other,
+            ),
+        })?;
+        Ok(Self {
+            root,
+            write_lock: Some(Arc::new(lock)),
+            session: None,
+        })
+    }
+
+    /// Refuse a writing operation on a store that was opened for reading.
+    fn require_write_role(&self, operation: &'static str, table: &str) -> Result<(), StorageError> {
+        if self.write_lock.is_some() {
+            return Ok(());
+        }
+        Err(StorageError::ReadOnly {
+            operation,
+            table: table.to_owned(),
+        })
     }
 
     /// Read and write this store's tables encrypted under the keyring's data key.
@@ -144,6 +199,7 @@ impl TableStore for LanceStore {
         table: &str,
         definition: &TableDefinition,
     ) -> Result<(), StorageError> {
+        self.require_write_role("create the table", table)?;
         // The compression travels as field metadata on the schema, so it is persisted with the table
         // rather than having to be supplied again on every write.
         let encoded = definition
@@ -165,6 +221,7 @@ impl TableStore for LanceStore {
     }
 
     async fn append(&self, table: &str, batch: &RecordBatch) -> Result<(), StorageError> {
+        self.require_write_role("append to", table)?;
         let schema = batch.schema();
         let batches = RecordBatchIterator::new(std::iter::once(Ok(batch.clone())), schema);
         let params = lance::dataset::WriteParams {
@@ -184,6 +241,7 @@ impl TableStore for LanceStore {
         matching: &Predicate,
         assignments: &[Assignment],
     ) -> Result<Updated, StorageError> {
+        self.require_write_role("update", table)?;
         if assignments.is_empty() {
             return Err(StorageError::NothingToSet {
                 table: table.to_owned(),
@@ -211,6 +269,7 @@ impl TableStore for LanceStore {
     }
 
     async fn delete(&self, table: &str, matching: &Predicate) -> Result<Deleted, StorageError> {
+        self.require_write_role("delete from", table)?;
         let mut dataset = self.open(table).await?;
 
         // Counted first, and logged before the delete runs. That ordering is the requirement rather
@@ -270,6 +329,22 @@ impl TableStore for LanceStore {
 /// nothing they can act on.
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
+    /// Another writer already holds this database.
+    #[error("another writer already holds the database at {}", root.display())]
+    AlreadyOpenForWriting {
+        /// The database that is held.
+        root: PathBuf,
+    },
+
+    /// A writing operation was asked of a store that was opened for reading.
+    #[error("cannot {operation} `{table}`: this database was opened for reading")]
+    ReadOnly {
+        /// What was attempted, phrased to read after "cannot".
+        operation: &'static str,
+        /// The table it was aimed at.
+        table: String,
+    },
+
     /// An update was asked for with no columns to set.
     ///
     /// Its own variant rather than a silent no-op: an update that changes nothing is a mistake at the

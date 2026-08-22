@@ -11,7 +11,7 @@ use super::secret::{KEY_LEN, SecretKey};
 /// Keyfile format version, written first so a future format can be recognised rather than misread.
 ///
 /// Version 2 holds a *set* of data keys rather than one. Rotation adds a key and retires the previous
-/// one without discarding it, because the payload it sealed is not rewritten (AC-21).
+/// one without discarding it, because the payload it sealed is not rewritten.
 const VERSION: u8 = 2;
 
 /// Argon2id salt length. Sixteen bytes is the length the RFC recommends and the crate's own default.
@@ -218,7 +218,7 @@ impl Keyring {
     /// Retire the current data key and start sealing new writes under a fresh one.
     ///
     /// **No payload is rewritten.** Everything already stored stays sealed under the key that sealed it,
-    /// and that key stays in the keyring so it stays readable (AC-21). The cost is that a keyring grows
+    /// and that key stays in the keyring so it stays readable. The cost is that a keyring grows
     /// by 36 bytes per rotation and that old data keeps whatever protection its key had.
     ///
     /// # Errors
