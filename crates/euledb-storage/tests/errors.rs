@@ -122,6 +122,18 @@ async fn no_public_call_panics_on_bad_input() {
         "documents",
         "indexing a column the table does not have",
     );
+    assert_refused(
+        store
+            .scan_ordered(
+                "documents",
+                &Predicate::new("id = 1"),
+                "kein_feld",
+                euledb_storage::Order::Ascending,
+            )
+            .await,
+        "documents",
+        "ordering by a column the table does not have",
+    );
 
     let wrong: ArrayRef = Arc::new(StringArray::from(vec!["nicht", "eine", "zahl"]));
     let mismatched =
