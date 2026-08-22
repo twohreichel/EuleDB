@@ -28,9 +28,10 @@ larger than it. A test asserting the direction would assert something untrue, so
 asserted — the crossover is a memory measurement over the reference corpus, not a unit test.
 
 **"Both kinds find the same nearest vector."** They do not — the graph returned `[4, 5, 14]` and the
-quantised index `[5, 4, 2]`. Product quantisation answers from a lossy code, and with a four-bit codebook
-over two dozen vectors the loss is large. The test now asserts what the criterion actually says: the same
-call serves both.
+quantised index `[5, 4, 2]`. A weaker replacement, "they share at least one result", **also failed, on
+aarch64 CI, where they shared nothing of three.** Product quantisation answers from a lossy code, and with
+a four-bit codebook over two dozen vectors the loss is large enough that no agreement claim is available.
+The test asserts what the criterion actually says and nothing more: the same call serves both kinds.
 
 **"Comparing artefact sizes shows which kind was built."** It does not. Two builds of the *same* kind
 differ in bytes, so `assert_ne!` on sizes is satisfied by noise — a mutation ignoring the requested kind
