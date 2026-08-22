@@ -96,6 +96,9 @@ pub struct LanceStore {
     /// Present when this store is encrypted. Carries the registry that resolves the encrypted URI
     /// scheme, which is how every byte gets routed through the cipher.
     session: Option<Arc<lance::session::Session>>,
+    /// Present when this handle can turn text into vectors. Absent means an auto-embedding column is
+    /// declared but nothing fills it, which is refused rather than silently skipped.
+    embedder: Option<Arc<dyn crate::Embedder>>,
     /// Present when this handle records what it is asked to do.
     audit: Option<crate::audit::AuditLog>,
     /// Present when this handle is gated. Absent means this is the authority's own handle and every
@@ -113,6 +116,7 @@ impl LanceStore {
             session: None,
             gate: None,
             audit: None,
+            embedder: None,
         }
     }
 
@@ -142,6 +146,7 @@ impl LanceStore {
             session: None,
             gate: None,
             audit: None,
+            embedder: None,
         })
     }
 
@@ -512,6 +517,277 @@ impl LanceStore {
         self
     }
 
+    /// Give this handle the means to embed text, so an auto-embedding column can fill itself.
+    ///
+    /// **Why a handle and not a table property** — the model is half a gigabyte of weights and about two
+    /// hundred crates. A process that only reads exact filters should not load it, and a table declaring
+    /// an embedding column should not force it to.
+    ///
+    /// Without one, inserting into a table that declares an auto-embedding column is **refused**: a row
+    /// stored with no vector is a row no semantic query can ever find, and silence there would be a
+    /// database quietly forgetting half of what it was given.
+    #[must_use]
+    pub fn embedding(mut self, embedder: Arc<dyn crate::Embedder>) -> Self {
+        self.embedder = Some(embedder);
+        self
+    }
+
+    /// The vectors of an auto-embedding column, in row and chunk order.
+    ///
+    /// # Errors
+    ///
+    /// Reports the failure when the table has no such auto-embedding column, or when its companion table
+    /// cannot be read.
+    pub async fn vectors_of(
+        &self,
+        table: &str,
+        column: &str,
+    ) -> crate::Result<Vec<crate::RowVector>> {
+        self.require_scope(Scope::Read, table)?;
+        let batches = self
+            .collect(
+                self.open(&Self::vector_table(table, column)).await?.scan(),
+                table,
+            )
+            .await?;
+
+        let mut vectors = Vec::new();
+        for batch in &batches {
+            let rows = batch
+                .column_by_name("row")
+                .and_then(|column| column.as_any().downcast_ref::<arrow_array::UInt64Array>())
+                .ok_or_else(|| {
+                    StorageError::backend("read the vectors of", table, "no row column")
+                })?;
+            let chunks = batch
+                .column_by_name("chunk")
+                .and_then(|column| column.as_any().downcast_ref::<arrow_array::UInt32Array>())
+                .ok_or_else(|| {
+                    StorageError::backend("read the vectors of", table, "no chunk column")
+                })?;
+            let embeddings = batch
+                .column_by_name("embedding")
+                .and_then(|column| {
+                    column
+                        .as_any()
+                        .downcast_ref::<arrow_array::FixedSizeListArray>()
+                })
+                .ok_or_else(|| {
+                    StorageError::backend("read the vectors of", table, "no embedding column")
+                })?;
+
+            for index in 0..batch.num_rows() {
+                let values = embeddings.value(index);
+                let floats = values
+                    .as_any()
+                    .downcast_ref::<arrow_array::Float32Array>()
+                    .ok_or_else(|| {
+                        StorageError::backend(
+                            "read the vectors of",
+                            table,
+                            "embeddings are not f32",
+                        )
+                    })?;
+                vectors.push(crate::RowVector {
+                    row: RowId::new(rows.value(index)),
+                    chunk: chunks.value(index),
+                    embedding: floats.values().to_vec(),
+                });
+            }
+        }
+        vectors.sort_by_key(|vector| (vector.row.get(), vector.chunk));
+        Ok(vectors)
+    }
+
+    /// Bring a column's vectors back into agreement with its text.
+    ///
+    /// **Reconciliation rather than incremental bookkeeping**, and deliberately so: a row whose text
+    /// changed may come back with a different identity, a deleted row leaves its vector behind, and an
+    /// inserted row has none. One rule covers all three — vectors whose row is gone are dropped, rows
+    /// whose text has no matching vector are embedded — and it is self-healing, so a write interrupted
+    /// half way leaves nothing permanently wrong.
+    ///
+    /// **The cost, stated:** one scan of the table per write. That is the price of correctness here, and
+    /// it is the thing to replace when it starts to matter — not the correctness.
+    async fn reconcile(&self, table: &str, column: &str) -> crate::Result<()> {
+        let Some(embedder) = self.embedder.clone() else {
+            return Err(StorageError::backend(
+                "embed the auto-embedding column of",
+                table,
+                "this handle has no embedder: open it with `embedding(..)`",
+            )
+            .into());
+        };
+
+        let companion = Self::vector_table(table, column);
+        let existing = match self.open(&companion).await {
+            Ok(_) => self.vectors_of(table, column).await?,
+            Err(_) => Vec::new(),
+        };
+
+        // Row identity and text together, in one pass.
+        let dataset = self.open(table).await?;
+        let mut scanner = dataset.scan();
+        scanner.with_row_id();
+        scanner.project(&[column]).map_err(|cause| {
+            StorageError::backend("project the embedding column of", table, cause)
+        })?;
+        let batches = scanner
+            .try_into_stream()
+            .await
+            .map_err(|cause| StorageError::backend("start a scan of the table", table, cause))?
+            .try_collect::<Vec<RecordBatch>>()
+            .await
+            .map_err(|cause| StorageError::backend("read the table", table, cause))?;
+
+        let mut present: Vec<(u64, String)> = Vec::new();
+        for batch in &batches {
+            let rows = batch
+                .column_by_name(lance_core::ROW_ID)
+                .and_then(|c| c.as_any().downcast_ref::<arrow_array::UInt64Array>())
+                .ok_or_else(|| {
+                    StorageError::backend("read the row ids of", table, "no row-id column")
+                })?;
+            let texts = batch
+                .column_by_name(column)
+                .and_then(|c| c.as_any().downcast_ref::<arrow_array::StringArray>())
+                .ok_or_else(|| {
+                    StorageError::backend(
+                        "read the embedding column of",
+                        table,
+                        "an auto-embedding column must hold text",
+                    )
+                })?;
+            for index in 0..batch.num_rows() {
+                present.push((rows.value(index), texts.value(index).to_owned()));
+            }
+        }
+
+        let live: std::collections::BTreeSet<u64> = present.iter().map(|(row, _)| *row).collect();
+        let vectored: std::collections::BTreeSet<u64> =
+            existing.iter().map(|vector| vector.row.get()).collect();
+
+        // Nothing to do is the common case after a write that touched no embedding column.
+        if live == vectored {
+            return Ok(());
+        }
+
+        // Rewritten wholesale rather than patched. A companion table is derived data: rebuilding it is
+        // always correct, and reasoning about a partial patch after an interrupted write is not.
+        let mut rows = Vec::new();
+        let mut chunks = Vec::new();
+        let mut values: Vec<f32> = Vec::new();
+        for (row, text) in &present {
+            let kept: Vec<Vec<f32>> = existing
+                .iter()
+                .filter(|vector| vector.row.get() == *row)
+                .map(|vector| vector.embedding.clone())
+                .collect();
+            let embeddings = if kept.is_empty() {
+                embedder
+                    .embed_passage(text)
+                    .map_err(|cause| StorageError::backend("embed the text of", table, cause))?
+            } else {
+                kept
+            };
+            for (chunk, embedding) in embeddings.into_iter().enumerate() {
+                if embedding.len() != crate::VECTOR_WIDTH {
+                    return Err(StorageError::backend(
+                        "embed the text of",
+                        table,
+                        format!(
+                            "the embedder produced {} components, not {}",
+                            embedding.len(),
+                            crate::VECTOR_WIDTH
+                        ),
+                    )
+                    .into());
+                }
+                rows.push(*row);
+                chunks.push(u32::try_from(chunk).unwrap_or(u32::MAX));
+                values.extend(embedding);
+            }
+        }
+
+        let schema = Arc::new(Self::vector_schema());
+        let embeddings = arrow_array::FixedSizeListArray::try_new(
+            Arc::new(arrow_schema::Field::new(
+                "item",
+                arrow_schema::DataType::Float32,
+                false,
+            )),
+            i32::try_from(crate::VECTOR_WIDTH).unwrap_or(i32::MAX),
+            Arc::new(arrow_array::Float32Array::from(values)),
+            None,
+        )
+        .map_err(|cause| StorageError::backend("build the vectors of", table, cause))?;
+        let batch = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![
+                Arc::new(arrow_array::UInt64Array::from(rows)),
+                Arc::new(arrow_array::UInt32Array::from(chunks)),
+                Arc::new(embeddings),
+            ],
+        )
+        .map_err(|cause| StorageError::backend("build the vectors of", table, cause))?;
+
+        let params = lance::dataset::WriteParams {
+            mode: lance::dataset::WriteMode::Overwrite,
+            ..Default::default()
+        };
+        let iterator = RecordBatchIterator::new(std::iter::once(Ok(batch)), schema);
+        lance::Dataset::write(iterator, self.uri(&companion).as_str(), Some(params))
+            .await
+            .map_err(|cause| StorageError::backend("write the vectors of", table, cause))?;
+        Ok(())
+    }
+
+    /// Reconcile every auto-embedding column of a table, or do nothing if it declares none.
+    ///
+    /// Called after every write rather than by the caller, which is the whole content of the criterion:
+    /// a vector that has to be refreshed by hand is a vector that will not be.
+    async fn reconcile_all(&self, table: &str) -> crate::Result<()> {
+        for column in self.embedding_columns(table).await? {
+            self.reconcile(table, &column).await?;
+        }
+        Ok(())
+    }
+
+    /// The columns of a table that embed themselves, read from the table's own schema.
+    async fn embedding_columns(&self, table: &str) -> crate::Result<Vec<String>> {
+        let dataset = self.open(table).await?;
+        let schema = arrow_schema::Schema::from(dataset.schema());
+        Ok(crate::TableSchema::new(schema).auto_embedding_columns())
+    }
+
+    /// The companion table holding one column's vectors.
+    ///
+    /// A separate table rather than a column on the same row, because chunking means one row owns an
+    /// ordered *set* of vectors and a row cannot hold a variable number of fixed-width lists usefully.
+    fn vector_table(table: &str, column: &str) -> String {
+        format!("{table}.{column}.vectors")
+    }
+
+    /// The schema of a companion table.
+    fn vector_schema() -> arrow_schema::Schema {
+        arrow_schema::Schema::new(vec![
+            arrow_schema::Field::new("row", arrow_schema::DataType::UInt64, false),
+            arrow_schema::Field::new("chunk", arrow_schema::DataType::UInt32, false),
+            arrow_schema::Field::new(
+                "embedding",
+                arrow_schema::DataType::FixedSizeList(
+                    Arc::new(arrow_schema::Field::new(
+                        "item",
+                        arrow_schema::DataType::Float32,
+                        false,
+                    )),
+                    i32::try_from(crate::VECTOR_WIDTH).unwrap_or(i32::MAX),
+                ),
+                false,
+            ),
+        ])
+    }
+
     /// Record every operation this handle performs in the database's audit log.
     ///
     /// **Why a tunable rather than always on** — a recorded read is a *write*, so an audited handle
@@ -652,7 +928,8 @@ impl TableStore for LanceStore {
         lance::Dataset::write(batches, self.uri(table).as_str(), Some(params))
             .await
             .map_err(|cause| StorageError::backend("append to the table", table, cause))?;
-        self.record(&format!("insert into `{table}`"), "", appended)
+        self.record(&format!("insert into `{table}`"), "", appended)?;
+        self.reconcile_all(table).await
     }
 
     async fn update(
@@ -694,6 +971,7 @@ impl TableStore for LanceStore {
                 .join(", "),
             result.rows_updated,
         )?;
+        self.reconcile_all(table).await?;
         Ok(Updated {
             rows: result.rows_updated,
         })
@@ -734,6 +1012,7 @@ impl TableStore for LanceStore {
             "",
             result.num_deleted_rows,
         )?;
+        self.reconcile_all(table).await?;
         Ok(Deleted {
             rows: result.num_deleted_rows,
         })
