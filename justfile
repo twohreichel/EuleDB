@@ -61,6 +61,10 @@ supply-chain:
 publish-check:
     cargo publish --dry-run --workspace --all-features --allow-dirty
 
+# Fetch the reference corpus the benchmarks are measured against.
+corpus:
+    python3 scripts/fetch-corpus.py
+
 # Lint the GitHub Actions workflows and the Dependabot policy. Needs actionlint and zizmor on PATH.
 lint-workflows:
     actionlint -color
