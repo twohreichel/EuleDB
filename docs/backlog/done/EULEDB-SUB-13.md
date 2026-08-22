@@ -7,7 +7,8 @@ size: M
 context_budget: 3000
 safety: additive API — a store that never rotates behaves exactly as before
 detail: full
-status: in-progress
+status: done
+pr: https://github.com/twohreichel/EuleDB/pull/14
 ---
 
 ## Goal
@@ -97,8 +98,8 @@ cargo nextest run -p euledb-storage -E 'binary(rotation)'
 
 ## Definition of Done
 
-- [ ] AC-21 covered both ways: a data-key rotation and a passphrase change, neither rewriting payload
-- [ ] Earlier rows proven readable after a rotation, by row ids rather than by row count
-- [ ] "No payload rewritten" proven by comparing bytes, not by trusting a timestamp
-- [ ] Every mutation of the rotation path shown to be caught, and the one gap closed
-- [ ] Both on-disk formats versioned rather than redefined
+- [x] AC-21 covered both ways: a data-key rotation and a passphrase change, neither rewriting payload
+- [x] Earlier rows proven readable after a rotation, by row ids rather than by row count
+- [x] "No payload rewritten" proven by comparing bytes, not by trusting a timestamp
+- [x] Every mutation of the rotation path shown to be caught, and the one gap closed
+- [x] Both on-disk formats versioned rather than redefined
