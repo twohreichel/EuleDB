@@ -82,7 +82,7 @@ fn contents(batches: &[RecordBatch]) -> Vec<(i64, String, String)> {
 }
 
 async fn seeded(root: &std::path::Path) -> LanceStore {
-    let store = LanceStore::new(root);
+    let store = LanceStore::open_for_writing(root).expect("taking the write role must succeed");
     store
         .create_table("documents", &documents())
         .await
@@ -319,7 +319,9 @@ async fn update_and_delete_work_on_an_encrypted_table() {
     // this is where it shows.
     let root = tempfile::tempdir().expect("a temporary directory is available");
     let keyring = Keyring::create("korrektes-pferd-batterie-heftklammer").expect("keyring");
-    let store = LanceStore::new(root.path()).encrypted(&keyring);
+    let store = LanceStore::open_for_writing(root.path())
+        .expect("taking the write role must succeed")
+        .encrypted(&keyring);
     store
         .create_table("documents", &documents())
         .await

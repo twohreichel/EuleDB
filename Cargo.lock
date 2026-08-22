@@ -1678,6 +1678,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "euledb-crash-writer"
+version = "0.0.0"
+dependencies = [
+ "arrow-array",
+ "arrow-schema",
+ "euledb-storage",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "euledb-storage"
 version = "0.0.0"
 dependencies = [
