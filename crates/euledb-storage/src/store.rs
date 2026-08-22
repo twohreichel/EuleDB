@@ -51,6 +51,12 @@ pub trait TableStore {
         assignments: &[Assignment],
     ) -> impl Future<Output = crate::Result<Updated>> + Send;
 
+    /// Remove a whole table, its rows and its declaration.
+    ///
+    /// Not the same operation as deleting every row: a dropped name is free again, and a table with no
+    /// rows still has a schema.
+    fn drop_table(&self, table: &str) -> impl Future<Output = crate::Result<()>> + Send;
+
     /// Remove every row matching a predicate.
     ///
     /// The count and the predicate are logged **before** anything is removed, so a delete broader than
@@ -179,10 +185,15 @@ impl LanceStore {
             .map_err(|cause| StorageError::backend("open the table", table, cause).into())
     }
 
-    /// Where a table lives. Tables are separate datasets, so one can be dropped without rewriting
-    /// the others.
+    /// The directory holding one table. Tables are separate datasets, so one can be dropped without
+    /// rewriting the others.
+    fn dataset_path(&self, table: &str) -> PathBuf {
+        self.root.join(format!("{table}.lance"))
+    }
+
+    /// Where a table lives, as the format's builder wants it.
     fn uri(&self, table: &str) -> String {
-        let path = self.root.join(format!("{table}.lance"));
+        let path = self.dataset_path(table);
         if self.session.is_some() {
             EncryptingProvider::uri(&path)
         } else {
@@ -295,6 +306,15 @@ impl TableStore for LanceStore {
         Ok(Deleted {
             rows: result.num_deleted_rows,
         })
+    }
+
+    async fn drop_table(&self, table: &str) -> crate::Result<()> {
+        self.require_write_role("drop the table", table)?;
+        // Removing the directory, rather than asking the format to: its own removal for a local
+        // dataset is this same synchronous call, and going through the builder would mean opening a
+        // table only to delete it.
+        std::fs::remove_dir_all(self.dataset_path(table))
+            .map_err(|cause| StorageError::backend("drop the table", table, cause).into())
     }
 
     async fn scan(&self, table: &str) -> crate::Result<Vec<RecordBatch>> {
