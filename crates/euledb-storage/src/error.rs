@@ -33,6 +33,10 @@ pub enum Error {
     #[error(transparent)]
     Keyring(#[from] KeyringError),
 
+    /// The audit log could not be written or read.
+    #[error(transparent)]
+    Audit(#[from] crate::audit::AuditError),
+
     /// A compression level outside the range the compressor defines.
     #[error(transparent)]
     Compression(#[from] InvalidZstdLevel),
