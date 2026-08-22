@@ -217,9 +217,9 @@ Every `AC-n` must end with at least one passing test; every task must name the `
 
 #### P1 — Indices and exact queries
 
-- **AC-24:** THE SYSTEM SHALL answer a point lookup on an indexed key column via an Adaptive Radix Tree
-  without a full scan, and SHALL prove this by an assertion on rows examined, not on wall-clock time.
-- **AC-25:** THE SYSTEM SHALL answer a range predicate on an indexed key column via the same ART index,
+- **AC-24:** THE SYSTEM SHALL answer a point lookup on an indexed key column through a key index without
+  a full scan, and SHALL prove this by an assertion on rows examined, not on wall-clock time.
+- **AC-25:** THE SYSTEM SHALL answer a range predicate on an indexed key column through the same index,
   returning results in key order.
 - **AC-26:** THE SYSTEM SHALL evaluate conjunctive and disjunctive filter predicates as Roaring bitmap
   set operations, and the result SHALL equal the result of the equivalent brute-force filter over the
@@ -229,9 +229,11 @@ Every `AC-n` must end with at least one passing test; every task must name the `
 - **AC-28:** THE SYSTEM SHALL gate table and column access behind signed capability tokens carrying
   read, write or schema scope, and SHALL reject an operation whose token lacks the required scope
   without revealing whether the target exists.
-- **AC-29:** WHEN any operation executes, THE SYSTEM SHALL append a record to a hash-chained,
+- **AC-29:** WHEN any operation executes, THE SYSTEM SHALL by default append a record to a hash-chained,
   append-only audit log containing the query representation, the resolved plan and the number of rows
-  affected.
+  affected. Reads are operations. Auditing SHALL be switchable off through the configuration mechanism of
+  AC-74, because a read that must write cannot reach a database on read-only media — and the consequence
+  of switching it off SHALL be stated where the tunable is.
 - **AC-30:** IF any link of the audit-log hash chain does not verify, THEN THE SYSTEM SHALL report the
   index of the first broken link and SHALL refuse to append further entries until the chain is
   explicitly re-anchored.
@@ -374,7 +376,7 @@ candidates named, decision deferred to the phase that needs it.
 | L0 | String encoding | FSST / dictionary | evaluate | Lance encodes strings internally — measure before writing an own encoder (AC-19) |
 | L0 | Encryption | `aes-gcm` (RustCrypto) | set | AES-256-GCM, one NCC Group audit, no significant findings, AES-NI/CLMUL accelerated |
 | L0 | Key derivation | `argon2` | set | Argon2id, AC-20 |
-| L1 | Key index | `art-tree` or `art-rs` | evaluate | Leis/Kemper/Neumann 2013; a SIMD-optimised variant is the third candidate. Decide at P1 |
+| L1 | Key index | Lance-native scalar index | set | decided at P1, see below. The Adaptive Radix Tree it replaces is recorded under § Decisions taken |
 | L1 | Predicate sets | `roaring` | set | the official roaring-rs port, AC-26 |
 | L1 | Vector index (HNSW) | Lance-native, else `hnsw_rs` / `hnswlib-rs` / `rust-cv/hnsw` | evaluate | **check Lance's own vector index first** — it already ships IVF-PQ, so an extra crate may be unnecessary |
 | L1 | Vector index (IVF-PQ) | Lance-native | set | AC-35 |
@@ -415,6 +417,45 @@ Two consequences that are easy to get wrong:
   device-specific behaviour this section removes.
 
 ### Decisions taken
+
+**Reads are audited, and auditing can be switched off** (decided 2026-08-22, at the P1 cut). AC-29 asks
+for a record per operation and AC-70 fixes many readers against one writer, so a reader that appends needs
+a lock — and a "read-only" handle that writes cannot open a database on read-only media at all. Resolved
+in three parts: the log takes a short-lived exclusive lock **on its own file**, so readers serialise only
+for the duration of one append and AC-70 is untouched; the default records every operation, reads
+included; and auditing is a tunable on the one configuration mechanism, so the read-only-media case stays
+usable. Rejected: auditing only data-changing operations, which would have read AC-29 narrower than it is
+written without saying so.
+
+**Capability tokens are symmetric** (decided 2026-08-22, at the P1 cut). HMAC-SHA256 under a key derived
+from the key-encryption key of AC-20, with a distinct derivation context so a token key can never be a
+data key. This document describes no second party — no multi-user model, no delegation, no tenancy — so an
+issuer that can also verify costs nothing, and asymmetric signatures would add a dependency and a second
+key to manage for a boundary that does not exist. Revisit if a token is ever issued across one.
+
+**The key index needs no separate persistence decision** (noted 2026-08-22). Whether to hold a key index
+in memory or on disk was a live question only while the index was going to be ours. The format's index is
+persisted, which is the better of the two options at no cost, so the question is closed by the decision
+above rather than answered on its own.
+
+
+**The key index is the format's, not an Adaptive Radix Tree of ours** (decided 2026-08-22, at the P1
+cut). AC-24 and AC-25 named an ART after Leis, Kemper and Neumann. Reading the pinned format's own crates
+showed it already ships a **persisted** scalar index answering both an exact lookup and a range as a pair
+of bounds, returning stable row ids, and reached through the object store this project already encrypts —
+so persistence and encryption at rest cost nothing.
+
+Building an ART instead would mean a large unsafe-heavy dependency and an index rebuilt in memory on every
+open, to duplicate what the format persists. Both criteria are now written as the behaviour they were
+always about — a point lookup and an ordered range without a full scan, measured on rows examined — which
+is what this document's own rule demands: a criterion that names an implementation is not falsifiable as
+behaviour and locks that implementation in.
+
+**The cost, stated:** this deepens the coupling to the format. The trait boundary still holds — no type of
+the format's leaves the storage crate — but replacing the format would now mean replacing its index too.
+The alternative was rejected because the boundary was never a promise that nothing behind it would be
+used, only that nothing behind it would leak.
+
 
 - **Lance as on-disk format, not an own format.** The competitive advantage is the NL/IR layer, the
   sandbox, the fusion planner, CRDT sync and the UX — not the storage format. Saves an estimated 3-5
