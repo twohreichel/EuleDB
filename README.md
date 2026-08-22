@@ -17,10 +17,18 @@ Your data stays yours.
 update, delete and drop, compressed, encrypted at rest with AES-256-GCM under a rotatable key, one
 writer at a time and any number of readers. Nothing has been published to a registry yet.
 
-**What the name promises is not built.** There is no vector search, no full-text search, no fusion of
-the two, and no plain-language query path — those are the phases after this one. Do not choose EuleDB
-today for what the first paragraph of this file describes. The cryptographic design has not been
-audited.
+**All three retrieval paths now answer**, over the same rows: an exact filter, semantic search over
+locally computed embeddings, and BM25 full text with per-language stemming — plus one hybrid query that
+fuses the last two into a single ranking and says which side found each hit.
+
+**The plain-language query path is not built**, so the promise in the first paragraph of this file is not
+yet kept in full. The cryptographic design has not been audited.
+
+## Getting started
+
+[`docs/getting-started.md`](docs/getting-started.md) walks through it end to end — open, declare, insert,
+and each kind of query. Every example there is compiled and executed by the test suite, so it cannot rot
+without the build noticing.
 
 ## What it is for
 
