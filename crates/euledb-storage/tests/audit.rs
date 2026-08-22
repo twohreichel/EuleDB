@@ -316,3 +316,242 @@ fn appends_from_many_threads_produce_a_gapless_chain() {
         );
     }
 }
+
+/// Tamper with one record in the middle and the log must name that link, not the first or the last.
+///
+/// An assertion that verification merely failed would pass with an off-by-one in the reported index —
+/// and that index is the number an operator acts on.
+#[test]
+fn verification_names_the_first_broken_link() {
+    let root = tempfile::tempdir().expect("a temporary directory is available");
+    let log = AuditLog::open(root.path());
+    for round in 0..5 {
+        log.append(&format!("scan `t{round}`"), "", round)
+            .expect("an append succeeds");
+    }
+    log.verify().expect("a log nobody touched must verify");
+
+    // Rewrite the row count of record 2. Its own hash no longer matches its content, and every link
+    // after it inherits the break.
+    let path = root.path().join(".euledb-audit.log");
+    let raw = std::fs::read_to_string(&path).expect("the log is readable");
+    let tampered: Vec<String> = raw
+        .lines()
+        .map(|line| {
+            let mut fields: Vec<&str> = line.split('\t').collect();
+            if fields.first() == Some(&"2") {
+                fields[3] = "9999";
+            }
+            fields.join("\t")
+        })
+        .collect();
+    std::fs::write(&path, tampered.join("\n") + "\n").expect("the log is writable");
+
+    let broken = log.verify().expect_err("a tampered log must not verify");
+    assert!(
+        matches!(&broken, euledb_storage::AuditError::BrokenChain { at } if *at == 2),
+        "the report must name link 2 — not the first, not the last: {broken:?}",
+    );
+}
+
+#[test]
+fn a_removed_record_breaks_the_chain_at_the_gap() {
+    let root = tempfile::tempdir().expect("a temporary directory is available");
+    let log = AuditLog::open(root.path());
+    for round in 0..5 {
+        log.append(&format!("scan `t{round}`"), "", round)
+            .expect("an append succeeds");
+    }
+
+    // Delete record 3 entirely — the tidiest way to hide an operation, and the one a chain exists for.
+    let path = root.path().join(".euledb-audit.log");
+    let raw = std::fs::read_to_string(&path).expect("the log is readable");
+    let kept: Vec<&str> = raw
+        .lines()
+        .filter(|line| !line.starts_with("3\t"))
+        .collect();
+    std::fs::write(&path, kept.join("\n") + "\n").expect("the log is writable");
+
+    let broken = log
+        .verify()
+        .expect_err("a log with a record removed must not verify");
+    assert!(
+        matches!(&broken, euledb_storage::AuditError::BrokenChain { at } if *at == 4),
+        "record 4 is the first whose predecessor is missing: {broken:?}",
+    );
+}
+
+/// A broken chain fails closed: nothing more may be appended until someone says so explicitly.
+///
+/// A log that keeps accepting entries after it has been tampered with is worse than no log, because it
+/// still looks trustworthy.
+#[test]
+fn a_broken_chain_refuses_further_appends_until_it_is_re_anchored() {
+    let root = tempfile::tempdir().expect("a temporary directory is available");
+    let log = AuditLog::open(root.path());
+    for round in 0..3 {
+        log.append(&format!("scan `t{round}`"), "", round)
+            .expect("an append succeeds");
+    }
+
+    let path = root.path().join(".euledb-audit.log");
+    let raw = std::fs::read_to_string(&path).expect("the log is readable");
+    let kept: Vec<&str> = raw
+        .lines()
+        .filter(|line| !line.starts_with("1\t"))
+        .collect();
+    std::fs::write(&path, kept.join("\n") + "\n").expect("the log is writable");
+
+    let refused = log
+        .append("scan `after`", "", 0)
+        .expect_err("a broken chain must refuse an append");
+    assert!(
+        matches!(&refused, euledb_storage::AuditError::BrokenChain { .. }),
+        "the refusal must be the break itself, not some other failure: {refused:?}",
+    );
+
+    // Re-anchoring is explicit, and it records the break it anchors past — otherwise the recovery
+    // erases the evidence, which is the one thing an audit log must never do.
+    log.reanchor()
+        .expect("re-anchoring an examined log succeeds");
+    log.append("scan `after`", "", 0)
+        .expect("appends resume once the chain is anchored again");
+    log.verify().expect("the re-anchored chain verifies");
+
+    let records = log.records().expect("the log parses");
+    let anchor = records
+        .iter()
+        .find(|record| record.query().contains("re-anchor"))
+        .expect("the re-anchor is itself a record");
+    // Link 2, not link 1: record 1 was removed, and the first link that does not *hold* is record 2,
+    // whose predecessor is gone. That is the number AC-30 asks for and the number an operator acts on.
+    assert!(
+        anchor.query().contains("broken link 2"),
+        "the anchor must name the first broken link: {:?}",
+        anchor.query(),
+    );
+    assert!(
+        records.len() >= 4,
+        "nothing before the break may be discarded — the evidence stays: {records:#?}",
+    );
+}
+
+#[test]
+fn re_anchoring_a_sound_log_is_refused() {
+    let root = tempfile::tempdir().expect("a temporary directory is available");
+    let log = AuditLog::open(root.path());
+    log.append("scan `t`", "", 0).expect("an append succeeds");
+
+    let refused = log
+        .reanchor()
+        .expect_err("a log that verifies has nothing to re-anchor");
+    assert!(
+        matches!(&refused, euledb_storage::AuditError::NothingToReanchor),
+        "re-anchoring a sound chain would obscure it for nothing: {refused:?}",
+    );
+}
+
+/// A forged re-anchor must not launder a break.
+///
+/// The marker is what makes a mid-log anchor legitimate, so an attacker who can write the file could try
+/// to append one by hand. They can — and it buys them nothing, because the records before it stay and
+/// the anchor they wrote names the break itself.
+#[test]
+fn a_hand_written_anchor_cannot_erase_what_came_before() {
+    let root = tempfile::tempdir().expect("a temporary directory is available");
+    let log = AuditLog::open(root.path());
+    for round in 0..4 {
+        log.append(&format!("scan `t{round}`"), "", round)
+            .expect("an append succeeds");
+    }
+
+    let path = root.path().join(".euledb-audit.log");
+    let before = std::fs::read_to_string(&path).expect("the log is readable");
+    let kept: Vec<&str> = before
+        .lines()
+        .filter(|line| !line.starts_with("2\t"))
+        .collect();
+    std::fs::write(&path, kept.join("\n") + "\n").expect("the log is writable");
+
+    // The break is visible, and re-anchoring does not remove the three records that remain.
+    let broken = log.verify().expect_err("the chain is broken");
+    assert!(
+        matches!(&broken, euledb_storage::AuditError::BrokenChain { at } if *at == 3),
+        "record 3 is the first whose predecessor is gone: {broken:?}",
+    );
+    log.reanchor().expect("re-anchoring succeeds");
+
+    let records = log.records().expect("the log parses");
+    assert_eq!(
+        records
+            .iter()
+            .map(AuditRecord::sequence)
+            .collect::<Vec<u64>>(),
+        vec![0, 1, 3, 4],
+        "the gap at 2 stays visible — an anchor moves forward, it does not tidy up behind itself",
+    );
+}
+
+/// An anchor without the marker must not launder the records before it.
+///
+/// The marker is what makes a mid-log anchor legitimate. Without requiring it, anyone who can write the
+/// file could silence a break by appending one bare record whose predecessor is the anchor value —
+/// verification would start reading from there and everything earlier would go unexamined.
+///
+/// The forged record is internally consistent, hash included. That is not a reimplementation of the
+/// production hash for its own sake: an attacker who can write the file can compute hashes too, and a
+/// forgery with a wrong hash would be caught by the content check instead, which would make this test
+/// pass for the wrong reason.
+#[test]
+fn an_anchor_without_the_marker_does_not_launder_the_break() {
+    use sha2::{Digest as _, Sha256};
+
+    let root = tempfile::tempdir().expect("a temporary directory is available");
+    let log = AuditLog::open(root.path());
+    for round in 0..4 {
+        log.append(&format!("scan `t{round}`"), "", round)
+            .expect("an append succeeds");
+    }
+
+    let path = root.path().join(".euledb-audit.log");
+    let raw = std::fs::read_to_string(&path).expect("the log is readable");
+    let kept: Vec<&str> = raw
+        .lines()
+        .filter(|line| !line.starts_with("2\t"))
+        .collect();
+
+    // A record that anchors a chain but does not say it is a re-anchor, sealed the way the format does.
+    let (sequence, query, plan, rows) = (4_u64, "scan `harmless`", "", 0_u64);
+    let mut digest = Sha256::new();
+    digest.update([0_u8; 32]);
+    digest.update(sequence.to_be_bytes());
+    digest.update((query.len() as u64).to_be_bytes());
+    digest.update(query.as_bytes());
+    digest.update((plan.len() as u64).to_be_bytes());
+    digest.update(plan.as_bytes());
+    digest.update(rows.to_be_bytes());
+    let hash: [u8; 32] = digest.finalize().into();
+    let hex = hash.iter().fold(String::new(), |mut out, byte| {
+        use std::fmt::Write as _;
+        let _ = write!(out, "{byte:02x}");
+        out
+    });
+    let forged = format!(
+        "{sequence}\t{}\t{hex}\t{rows}\t{query}\t{plan}",
+        "0".repeat(64)
+    );
+
+    let mut lines = kept.join("\n");
+    lines.push('\n');
+    lines.push_str(&forged);
+    lines.push('\n');
+    std::fs::write(&path, lines).expect("the log is writable");
+
+    let broken = log
+        .verify()
+        .expect_err("a bare anchor must not make a broken chain verify");
+    assert!(
+        matches!(&broken, euledb_storage::AuditError::BrokenChain { at } if *at == 3),
+        "the break at record 3 must still be reported, not skipped over: {broken:?}",
+    );
+}
