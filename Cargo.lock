@@ -1884,6 +1884,7 @@ version = "0.0.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
+ "euledb-embed",
  "euledb-storage",
  "tempfile",
  "tokio",
@@ -1914,7 +1915,6 @@ dependencies = [
 name = "euledb-embed"
 version = "0.0.0"
 dependencies = [
- "euledb-corpus",
  "euledb-storage",
  "tempfile",
  "thiserror",
