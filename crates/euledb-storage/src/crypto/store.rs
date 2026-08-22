@@ -164,13 +164,16 @@ impl ObjectStore for EncryptingObjectStore {
             .get_ranges(location, &[header_span, span.clone()])
             .await?;
         let header = fetched.first().cloned().unwrap_or_default();
-        self.frame
+        // The header says which key sealed this object and at what block size, and both are needed to
+        // open it. A rotated keyring reads an older object because the object names its own key.
+        let framing = self
+            .frame
             .read_header(&header)
             .map_err(|err| crypto_error(location, err))?;
         let sealed = fetched.get(1).cloned().unwrap_or_default();
         let plaintext = self
             .frame
-            .open_span(&sealed, span, wanted.clone())
+            .open_span(&sealed, span, wanted.clone(), framing)
             .map_err(|err| crypto_error(location, err))?;
 
         Ok(GetResult {

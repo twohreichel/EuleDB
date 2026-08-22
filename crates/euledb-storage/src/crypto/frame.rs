@@ -5,10 +5,15 @@
 //! header followed by fixed-size blocks, each sealed on its own:
 //!
 //! ```text
-//! ┌────────── header ──────────┬───── block 0 ─────┬───── block 1 ─────┬ ...
-//! │ magic(4) ver(1) block_sz(4)│ nonce(12) ct+tag  │ nonce(12) ct+tag  │
-//! └────────────────────────────┴───────────────────┴───────────────────┘
+//! ┌───────────────── header ─────────────────┬───── block 0 ─────┬───── block 1 ─────┬ ...
+//! │ magic(4) ver(1) block_sz(4) key_id(4)    │ nonce(12) ct+tag  │ nonce(12) ct+tag  │
+//! └──────────────────────────────────────────┴───────────────────┴───────────────────┘
 //! ```
+//!
+//! The **key id** is what makes rotation possible without rewriting anything (AC-21). An object records
+//! which data key sealed it, so a keyring that has rotated still opens it — and a new object is sealed
+//! under the new key. The id is authenticated along with the block index, so pointing an object at
+//! another key fails the tag rather than reading as something else.
 //!
 //! Three decisions in that layout, each load-bearing:
 //!
@@ -21,29 +26,34 @@
 //!   marker stops truncation: a reader that reaches the end without having seen a block marked final
 //!   knows bytes are missing, which the length alone cannot tell it. Both come from the shape
 //!   established streaming-AEAD designs use.
-//! - **The block size is written into the header.** It becomes part of the layout the moment anything is
-//!   stored, so a reader has to learn it from the object rather than from the build that reads it.
+//! - **The block size and the key id are written into the header.** Both become part of the layout the
+//!   moment anything is stored, so a reader has to learn them from the object rather than from the build
+//!   or the keyring that happens to be reading it.
 //!
 //! What this does NOT protect against, stated because it matters: an attacker who replaces one whole
 //! object with another object sealed under the same key. The object's identity is deliberately not
 //! authenticated, because binding it would break rename and copy. Detecting that substitution belongs
 //! to the layer that knows which objects should exist.
 
+use std::collections::BTreeMap;
 use std::ops::Range;
 
 use aes_gcm::Aes256Gcm;
 use aes_gcm::aead::{Aead, KeyInit, Nonce, Payload};
 
+use super::keyring::DataKeyId;
 use super::secret::SecretKey;
 
 /// Marks an object as framed by this crate, so a plaintext file is not mistaken for a sealed one.
 const MAGIC: [u8; 4] = *b"EULE";
 
 /// Framing version. A reader that does not know a version refuses rather than guesses.
-const VERSION: u8 = 1;
+///
+/// Version 2 adds the key id, so that rotating a data key does not require rewriting payload.
+const VERSION: u8 = 2;
 
-/// `magic` + `version` + `block_size`.
-const HEADER_LEN: usize = 4 + 1 + 4;
+/// `magic` + `version` + `block_size` + `key_id`.
+const HEADER_LEN: usize = 4 + 1 + 4 + 4;
 
 /// AES-GCM nonce length in bytes.
 const NONCE_LEN: usize = 12;
@@ -95,17 +105,38 @@ impl Default for BlockSize {
     }
 }
 
+/// What an object's header says about how it was sealed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Framing {
+    /// The plaintext bytes per block this object was written with.
+    pub(crate) block_size: BlockSize,
+    /// Which data key sealed it.
+    pub(crate) key: DataKeyId,
+}
+
 /// Seals and opens objects a block at a time.
+///
+/// Holds every key the keyring holds, and seals under one of them. A rotated keyring keeps the retired
+/// keys precisely so that the objects they sealed stay readable.
 #[derive(Debug, Clone)]
 pub(crate) struct BlockFrame {
-    key: SecretKey,
+    keys: BTreeMap<DataKeyId, SecretKey>,
+    current: DataKeyId,
     block_size: BlockSize,
 }
 
 impl BlockFrame {
-    /// A frame for one key and one block size.
-    pub(crate) const fn new(key: SecretKey, block_size: BlockSize) -> Self {
-        Self { key, block_size }
+    /// A frame over a key set, sealing under `current`.
+    pub(crate) const fn new(
+        keys: BTreeMap<DataKeyId, SecretKey>,
+        current: DataKeyId,
+        block_size: BlockSize,
+    ) -> Self {
+        Self {
+            keys,
+            current,
+            block_size,
+        }
     }
 
     /// Bytes the header takes.
@@ -180,7 +211,8 @@ impl BlockFrame {
         header[..4].copy_from_slice(&MAGIC);
         header[4] = VERSION;
         // The block size is bounded by BlockSize::new, so this conversion cannot fail.
-        header[5..].copy_from_slice(&(self.block_size.get() as u32).to_le_bytes());
+        header[5..9].copy_from_slice(&(self.block_size.get() as u32).to_le_bytes());
+        header[9..].copy_from_slice(&self.current.get().to_le_bytes());
         header
     }
 
@@ -202,12 +234,12 @@ impl BlockFrame {
         let mut nonce = [0_u8; NONCE_LEN];
         getrandom::fill(&mut nonce).map_err(|_| FrameError::Random)?;
         let sealed = self
-            .cipher()?
+            .cipher(self.current)?
             .encrypt(
                 &Nonce::<Aes256Gcm>::from(nonce),
                 Payload {
                     msg: plaintext,
-                    aad: &Self::associated_data(index, final_block),
+                    aad: &Self::associated_data(self.current, index, final_block),
                 },
             )
             .map_err(|_| FrameError::Cipher)?;
@@ -224,19 +256,11 @@ impl BlockFrame {
     /// [`FrameError::Random`] if the platform's random source fails, [`FrameError::Cipher`] if sealing
     /// does — neither is recoverable by retrying.
     pub(crate) fn seal(&self, plaintext: &[u8]) -> Result<Vec<u8>, FrameError> {
-        let cipher = self.cipher()?;
+        let cipher = self.cipher(self.current)?;
         let mut out = Vec::with_capacity(
             usize::try_from(self.ciphertext_len(plaintext.len() as u64)).unwrap_or(0),
         );
-        out.extend_from_slice(&MAGIC);
-        out.push(VERSION);
-        out.extend_from_slice(
-            &u32::try_from(self.block_size.get())
-                .map_err(|_| FrameError::UnsupportedBlockSize {
-                    given: self.block_size.get(),
-                })?
-                .to_le_bytes(),
-        );
+        out.extend_from_slice(&self.header());
 
         // Every object ends with a block SHORTER than a full one — empty when the plaintext is an exact
         // multiple of the block size, including when it is empty. That is what makes "final" readable
@@ -257,7 +281,7 @@ impl BlockFrame {
                     &Nonce::<Aes256Gcm>::from(nonce),
                     Payload {
                         msg: chunk,
-                        aad: &Self::associated_data(index as u64, index == last),
+                        aad: &Self::associated_data(self.current, index as u64, index == last),
                     },
                 )
                 .map_err(|_| FrameError::Cipher)?;
@@ -280,13 +304,14 @@ impl BlockFrame {
     #[cfg(test)]
     pub(crate) fn open(&self, ciphertext: &[u8]) -> Result<Vec<u8>, FrameError> {
         let plaintext_len = self.plaintext_len(ciphertext.len() as u64)?;
-        self.read_header(ciphertext)?;
+        let framing = self.read_header(ciphertext)?;
         // open_span takes the BODY and the span it occupies, so the header is left behind here rather
         // than handed on — passing the whole object made every round trip look truncated.
         self.open_span(
             &ciphertext[HEADER_LEN..],
             HEADER_LEN as u64..(ciphertext.len() as u64),
             0..plaintext_len,
+            framing,
         )
     }
 
@@ -303,8 +328,11 @@ impl BlockFrame {
         ciphertext: &[u8],
         span: Range<u64>,
         wanted: Range<u64>,
+        framing: Framing,
     ) -> Result<Vec<u8>, FrameError> {
-        let cipher = self.cipher()?;
+        // The key comes from the object's own header, not from what this frame happens to seal with.
+        // That is what lets a rotated keyring still read what an earlier key sealed.
+        let cipher = self.cipher(framing.key)?;
         let stride = self.sealed_block_len();
         let header = HEADER_LEN as u64;
         if span.start < header || !(span.start - header).is_multiple_of(stride as u64) {
@@ -334,7 +362,7 @@ impl BlockFrame {
                         // Whether this is the final block is known from its length: only the last one
                         // is shorter than a full block. A truncation that removes whole blocks
                         // therefore fails here, because the block it stops at was not sealed as final.
-                        aad: &Self::associated_data(index, sealed.len() < stride),
+                        aad: &Self::associated_data(framing.key, index, sealed.len() < stride),
                     },
                 )
                 .map_err(|_| FrameError::Authentication { block: index })?;
@@ -365,7 +393,7 @@ impl BlockFrame {
     /// [`FrameError::NotFramed`] when the magic is absent, [`FrameError::UnsupportedVersion`] for a
     /// version this build does not know, and [`FrameError::BlockSizeMismatch`] when the object was
     /// written with a different block size than this frame uses.
-    pub(crate) fn read_header(&self, ciphertext: &[u8]) -> Result<BlockSize, FrameError> {
+    pub(crate) fn read_header(&self, ciphertext: &[u8]) -> Result<Framing, FrameError> {
         if ciphertext.len() < HEADER_LEN {
             return Err(FrameError::Truncated);
         }
@@ -386,23 +414,40 @@ impl BlockFrame {
                 configured: self.block_size.get(),
             });
         }
-        BlockSize::new(declared)
+        let key = DataKeyId::from(u32::from_le_bytes([
+            ciphertext[9],
+            ciphertext[10],
+            ciphertext[11],
+            ciphertext[12],
+        ]));
+        // Refused here rather than at the tag, so the message names the missing key instead of saying
+        // "block 0 did not authenticate" about a key the keyring simply does not have.
+        if !self.keys.contains_key(&key) {
+            return Err(FrameError::UnknownKey { key });
+        }
+        Ok(Framing {
+            block_size: BlockSize::new(declared)?,
+            key,
+        })
     }
 
     /// The authenticated data for a block: the framing version and the block's index.
     ///
     /// The index is what makes reordering detectable. The version is there so a future framing cannot
     /// be confused with this one even if a reader is careless about the header.
-    fn associated_data(index: u64, final_block: bool) -> [u8; 10] {
-        let mut aad = [0_u8; 10];
+    fn associated_data(key: DataKeyId, index: u64, final_block: bool) -> [u8; 14] {
+        let mut aad = [0_u8; 14];
         aad[0] = VERSION;
-        aad[1..9].copy_from_slice(&index.to_le_bytes());
-        aad[9] = u8::from(final_block);
+        aad[1..5].copy_from_slice(&key.get().to_le_bytes());
+        aad[5..13].copy_from_slice(&index.to_le_bytes());
+        aad[13] = u8::from(final_block);
         aad
     }
 
-    fn cipher(&self) -> Result<Aes256Gcm, FrameError> {
-        Aes256Gcm::new_from_slice(self.key.expose()).map_err(|_| FrameError::Cipher)
+    /// The cipher for one of this frame's keys.
+    fn cipher(&self, key: DataKeyId) -> Result<Aes256Gcm, FrameError> {
+        let secret = self.keys.get(&key).ok_or(FrameError::UnknownKey { key })?;
+        Aes256Gcm::new_from_slice(secret.expose()).map_err(|_| FrameError::Cipher)
     }
 }
 
@@ -442,6 +487,13 @@ pub(crate) enum FrameError {
         configured: usize,
     },
 
+    /// The object was sealed with a key this keyring does not hold.
+    #[error("this object was sealed with data key {key}, which this keyring does not hold")]
+    UnknownKey {
+        /// The key the object names.
+        key: DataKeyId,
+    },
+
     /// A block size that is not a power of two between the supported bounds.
     #[error("a block size must be a power of two between 64 and 1048576, and {given} is not")]
     UnsupportedBlockSize {
@@ -470,15 +522,31 @@ mod tests {
         reason = "in a test an unwrap IS the assertion"
     )]
 
-    use super::{BlockFrame, BlockSize, FrameError};
+    use super::{BlockFrame, BlockSize, FrameError, Framing};
+    use crate::crypto::keyring::DataKeyId;
     use crate::crypto::secret::SecretKey;
 
     /// A small block size, so a test corpus of a few hundred bytes spans several blocks.
     const SMALL: usize = 64;
 
+    /// The single key every test in this module seals with.
+    const KEY: DataKeyId = DataKeyId::FIRST;
+
+    fn keys() -> std::collections::BTreeMap<DataKeyId, SecretKey> {
+        std::collections::BTreeMap::from([(KEY, SecretKey::new([7_u8; 32]))])
+    }
+
+    /// The framing a test's own frame writes, for the range tests that call open_span directly.
+    fn framing_of(frame: &BlockFrame) -> Framing {
+        frame
+            .read_header(&frame.header())
+            .expect("a frame's own header is one it can read")
+    }
+
     fn frame() -> BlockFrame {
         BlockFrame::new(
-            SecretKey::new([7_u8; 32]),
+            keys(),
+            KEY,
             BlockSize::new(SMALL).expect("64 is a valid block size"),
         )
     }
@@ -509,8 +577,12 @@ mod tests {
         let frame = frame();
         for len in LENGTHS {
             let original = plaintext(len);
-            let sealed = frame.seal(&original).expect("sealing must succeed");
-            let opened = frame.open(&sealed).expect("opening must succeed");
+            let sealed = frame
+                .seal(&original)
+                .unwrap_or_else(|err| panic!("sealing {len} bytes failed: {err}"));
+            let opened = frame
+                .open(&sealed)
+                .unwrap_or_else(|err| panic!("opening {len} bytes failed: {err}"));
             assert_eq!(opened, original, "round trip lost data at length {len}");
         }
     }
@@ -615,7 +687,12 @@ mod tests {
             let start = usize::try_from(ciphertext_span.start).expect("fits");
             let end = usize::try_from(ciphertext_span.end).expect("fits");
             let opened = frame
-                .open_span(&sealed[start..end], ciphertext_span, range.clone())
+                .open_span(
+                    &sealed[start..end],
+                    ciphertext_span,
+                    range.clone(),
+                    framing_of(&frame),
+                )
                 .expect("a range read must succeed");
 
             let wanted = &original[range.start as usize..range.end as usize];
@@ -638,7 +715,7 @@ mod tests {
 
         assert!(
             matches!(
-                frame.open_span(&sealed[start..end], span, wanted),
+                frame.open_span(&sealed[start..end], span, wanted, framing_of(&frame)),
                 Err(FrameError::RangeOutsideObject)
             ),
             "a range reaching past the end returned data instead of refusing",
@@ -662,6 +739,33 @@ mod tests {
     }
 
     #[test]
+    fn an_object_sealed_with_a_key_the_frame_does_not_hold_is_refused_by_name() {
+        // The rotation case seen from the other side: a keyring that never held the key an object names
+        // must say so, rather than reporting a tag failure about a key it does not have. That is the
+        // difference between "restore your older keyfile" and "your data is corrupt".
+        let rotated = BlockFrame::new(
+            std::collections::BTreeMap::from([
+                (KEY, SecretKey::new([7_u8; 32])),
+                (DataKeyId::from(2), SecretKey::new([9_u8; 32])),
+            ]),
+            DataKeyId::from(2),
+            BlockSize::new(SMALL).expect("64 is a valid block size"),
+        );
+        let sealed = rotated
+            .seal(&plaintext(200))
+            .expect("seal under the newer key");
+
+        let older = frame();
+        assert!(
+            matches!(
+                older.open(&sealed),
+                Err(FrameError::UnknownKey { key }) if key == DataKeyId::from(2)
+            ),
+            "a frame without the key named by the object did not say which key was missing",
+        );
+    }
+
+    #[test]
     fn an_object_written_with_another_block_size_is_refused() {
         // The block size is part of the layout, so a reader configured differently must refuse rather
         // than compute offsets that happen to parse. The header carries it for exactly this check.
@@ -669,7 +773,8 @@ mod tests {
         let sealed = written.seal(&plaintext(200)).expect("seal");
 
         let other = BlockFrame::new(
-            SecretKey::new([7_u8; 32]),
+            keys(),
+            KEY,
             BlockSize::new(128).expect("128 is a valid block size"),
         );
 
@@ -711,7 +816,7 @@ mod tests {
                 &Nonce::<Aes256Gcm>::from(nonce),
                 Payload {
                     msg: &original[SMALL..2 * SMALL],
-                    aad: &BlockFrame::associated_data(1, true),
+                    aad: &BlockFrame::associated_data(KEY, 1, true),
                 },
             )
             .expect("sealing must succeed");
