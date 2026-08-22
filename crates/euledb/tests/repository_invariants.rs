@@ -312,3 +312,50 @@ fn no_crate_outside_the_storage_layer_names_the_on_disk_format() {
         leaks.join("\n  "),
     );
 }
+
+/// The store type outside the storage layer: legitimate to use, never to publish.
+///
+/// A distinct check from the one above, because the rule is different. Naming the format's *crate*
+/// outside the storage layer is always wrong. Naming the store *type* is not — the facade holds one.
+/// What must not happen is re-exporting it, which would put the format's name in the published API
+/// even though no line imports the format's crate.
+#[test]
+fn no_crate_outside_the_storage_layer_re_exports_the_store_type() {
+    /// The type whose name carries the format.
+    const STORE_TYPE: &str = "LanceStore";
+
+    let mut leaks = Vec::new();
+
+    for dir in member_crate_dirs() {
+        if dir.file_name().and_then(|name| name.to_str()) == Some(STORAGE_CRATE) {
+            continue;
+        }
+        let src = dir.join("src");
+        if !src.is_dir() {
+            continue;
+        }
+        let sources = fs::read_dir(&src)
+            .expect("a crate's src/ directory is readable")
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "rs"));
+        for file in sources {
+            let Ok(source) = fs::read_to_string(&file) else {
+                continue;
+            };
+            for (number, line) in source.lines().enumerate() {
+                let code = line.trim();
+                if code.starts_with("pub use") && code.contains(STORE_TYPE) {
+                    leaks.push(format!("{}:{}: {code}", file.display(), number + 1));
+                }
+            }
+        }
+    }
+
+    assert!(
+        leaks.is_empty(),
+        "`{STORE_TYPE}` is re-exported outside `{STORAGE_CRATE}`, which publishes the on-disk format \
+         through the facade:\n  {}",
+        leaks.join("\n  "),
+    );
+}
