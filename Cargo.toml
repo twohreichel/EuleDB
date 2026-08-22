@@ -25,6 +25,10 @@ debug = "line-tables-only"
 debug = "line-tables-only"
 
 [workspace.dependencies]
+# The storage layer, as a path dependency with an explicit version because `euledb` is published and
+# cargo refuses a path dependency without one. Release Please rewrites the version on a release, so it
+# tracks the workspace version rather than being maintained by hand.
+euledb-storage = { path = "crates/euledb-storage", version = "0.0.0" }
 # The interchange contract. arrow-schema and arrow-array rather than the `arrow` facade: the storage
 # layer needs the schema types and RecordBatch, not the compute kernels, the CSV reader or the FFI
 # layer. A consumer using the facade gets the same types, because the facade re-exports these.

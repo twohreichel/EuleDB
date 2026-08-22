@@ -14,7 +14,7 @@ repository.workspace = true
 [dependencies]
 arrow-array.workspace = true
 arrow-schema.workspace = true
-euledb-storage = { path = "../euledb-storage" }
+euledb-storage.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [dev-dependencies]
