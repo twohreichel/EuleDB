@@ -70,6 +70,10 @@ lance-io = { version = "=10.0.0", default-features = false }
 # `cache` but not this constant, and naming the column the format names it is what makes a rename break
 # the build instead of returning "no row-id column" at runtime. Same exact pin, for the same reason.
 lance-core = { version = "=10.0.0", default-features = false }
+# The index type and its parameters. `lance` re-exports the trait that creates an index but not the enum
+# naming which kind, so the enum comes from here — and it has to be the same version as lance, or it is
+# a different enum.
+lance-index = { version = "=10.0.0", default-features = false }
 arrow-schema = "58"
 # TryStreamExt, to collect a scan. Already in the tree through lance, so this adds nothing.
 futures-util = { version = "0.3", default-features = false }
