@@ -27,9 +27,19 @@ use euledb_storage::Compression;
 /// assert_eq!(archival.compression(), Compression::zstd(ZstdLevel::new(19)?));
 /// # Ok::<(), euledb::Error>(())
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     compression: Compression,
+    auditing: bool,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            compression: Compression::default(),
+            auditing: true,
+        }
+    }
 }
 
 impl Config {
@@ -49,5 +59,27 @@ impl Config {
     #[must_use]
     pub fn compression(&self) -> Compression {
         self.compression
+    }
+
+    /// Whether every operation is recorded in the database's hash-chained audit log.
+    ///
+    /// **Default** — on. **Effect** — each operation appends one record naming what was asked and how
+    /// many rows it affected, chained so that a removed or altered entry does not go unnoticed. Reads
+    /// are operations: who read what is usually the question an audit log is opened to answer.
+    ///
+    /// **The consequence of switching it off, and of leaving it on.** A recorded read is a *write*, so
+    /// an audited handle cannot open a database on read-only media or one the caller may only read —
+    /// turn this off there, and accept that reads then leave no trace. Left on, the log grows by one
+    /// line per operation and is never pruned by this database.
+    #[must_use]
+    pub fn with_auditing(mut self, auditing: bool) -> Self {
+        self.auditing = auditing;
+        self
+    }
+
+    /// Whether operations are recorded.
+    #[must_use]
+    pub const fn auditing(&self) -> bool {
+        self.auditing
     }
 }

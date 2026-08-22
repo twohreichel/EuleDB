@@ -72,10 +72,13 @@ impl Database {
     /// Open a database for reading, with a configuration.
     #[must_use]
     pub fn open_with(root: impl AsRef<Path>, config: Config) -> Self {
-        Self {
-            store: LanceStore::new(root),
-            config,
-        }
+        let store = LanceStore::new(root);
+        let store = if config.auditing() {
+            store.audited()
+        } else {
+            store
+        };
+        Self { store, config }
     }
 
     /// Open a database for writing, taking the write role until the handle is dropped.
@@ -98,10 +101,13 @@ impl Database {
     ///
     /// As [`Database::open_for_writing`].
     pub fn open_for_writing_with(root: impl AsRef<Path>, config: Config) -> crate::Result<Self> {
-        Ok(Self {
-            store: LanceStore::open_for_writing(root)?,
-            config,
-        })
+        let store = LanceStore::open_for_writing(root)?;
+        let store = if config.auditing() {
+            store.audited()
+        } else {
+            store
+        };
+        Ok(Self { store, config })
     }
 
     /// Read and write this database encrypted under the keyring's data key.
