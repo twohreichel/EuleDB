@@ -40,3 +40,7 @@ Thumbs.db
 *~
 CLAUDE.md
 .claude/
+
+# The reference corpus is fetched, not tracked: 35 MB of somebody else's prose does not belong in a
+# source repository. `just corpus` fetches it and its digest is pinned in code. See corpus/README.md.
+corpus/reference.tsv
