@@ -14,6 +14,7 @@ use crate::crypto::{BlockSize, EncryptingProvider};
 use crate::measurement::{Measured, RowId, widest_scan};
 use crate::writer_lock::{LockError, WriteLock};
 use crate::{Assignment, Compression, Deleted, Keyring, Predicate, TableDefinition, Updated};
+use lance::index::DatasetIndexExt as _;
 
 /// A cause from the layer below, kept as an opaque source.
 ///
@@ -132,6 +133,38 @@ impl LanceStore {
             write_lock: Some(Arc::new(lock)),
             session: None,
         })
+    }
+
+    /// Build an index over a column, so an exact lookup on it stops walking the table.
+    ///
+    /// **An operation, not a declaration.** The index is built over the rows that are already there,
+    /// which is why it cannot be an attribute of a table declared before any row exists.
+    ///
+    /// Rows appended afterwards stay findable: the index keeps covering the fragments it was built over
+    /// and the remainder is scanned, so a lookup examines the newer rows rather than all of them.
+    /// Calling this again after a large append rebuilds the index over everything and returns a lookup
+    /// to a handful of rows.
+    ///
+    /// # Errors
+    ///
+    /// Reports the failure when the table or the column does not exist, and refuses when this store was
+    /// opened for reading.
+    pub async fn create_index(&self, table: &str, column: &str) -> crate::Result<()> {
+        self.require_write_role("index a column of", table)?;
+        let mut dataset = self.open(table).await?;
+        // No name of ours: the format names an index after the column, and a naming convention we own is
+        // one more thing that has to stay stable for no benefit. `replace` so that calling this again
+        // after an append rebuilds rather than refusing.
+        Box::pin(dataset.create_index(
+            &[column],
+            lance_index::IndexType::BTree,
+            None,
+            &lance_index::scalar::ScalarIndexParams::default(),
+            true,
+        ))
+        .await
+        .map_err(|cause| StorageError::backend("index a column of", table, cause))?;
+        Ok(())
     }
 
     /// The row ids of every row matching a predicate.
