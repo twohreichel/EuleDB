@@ -51,7 +51,11 @@ fn data_files(root: &Path) -> BTreeMap<String, Vec<u8>> {
             let path = entry.path();
             if path.is_dir() {
                 stack.push(path);
-            } else if path.to_string_lossy().contains("/data/") {
+            } else if path.components().any(|part| part.as_os_str() == "data") {
+                // By component, not by a string containing "/data/": Windows separates with a backslash,
+                // so the string form found nothing there and the map came back empty. The assertion that
+                // the map is non-empty is what caught it.
+
                 let name = path
                     .strip_prefix(root)
                     .unwrap_or(&path)
