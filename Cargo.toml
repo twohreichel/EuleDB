@@ -77,6 +77,11 @@ lance-index = { version = "=10.0.0", default-features = false }
 arrow-schema = "58"
 # TryStreamExt, to collect a scan. Already in the tree through lance, so this adds nothing.
 futures-util = { version = "0.3", default-features = false }
+# Compressed integer sets, for combining the row ids of several predicates. The official roaring-rs
+# port, and `set` in the spec's technology stack rather than a choice made here. default-features = false
+# keeps the serde and byte-order machinery out: the sets live in memory for the length of one query and
+# are never written to disk.
+roaring = { version = "0.11", default-features = false }
 tempfile = "3"
 # Capturing the delete announcement in a test. A dev-dependency: a library emits events, it does not
 # decide how they are collected.
