@@ -418,6 +418,21 @@ Two consequences that are easy to get wrong:
 
 ### Decisions taken
 
+**No scalar index in this format returns rows in key order** (measured 2026-08-22, at SUB-21). AC-25 is
+phrased so that a reader assumes the index supplies the order. It does not: a range over an indexed
+column was run against both the ordered and the bitmap index kind, and both returned storage order. The
+criterion is met by narrowing with the index and then ordering the rows it selected — a sort over the
+matches, not over the table, which is why narrowing first is what keeps it cheap. Measured, not argued:
+a full scan followed by a sort returns the same rows in the same order, so the rows-examined count is
+what tells the two apart.
+
+**Consequence, worth stating because it will be asked:** the choice of index kind is therefore not
+distinguishable by any P1 criterion. Neither kind provides ordering and both serve a range without a
+full scan. The ordered kind is chosen on cardinality — a bitmap over a thousand distinct integers is a
+thousand bitmaps — and if a low-cardinality column ever wants the other kind, that is a tunable for the
+mechanism of AC-74, not a criterion.
+
+
 **Reads are audited, and auditing can be switched off** (decided 2026-08-22, at the P1 cut). AC-29 asks
 for a record per operation and AC-70 fixes many readers against one writer, so a reader that appends needs
 a lock — and a "read-only" handle that writes cannot open a database on read-only media at all. Resolved
