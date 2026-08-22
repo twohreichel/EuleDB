@@ -1707,6 +1707,7 @@ dependencies = [
  "getrandom 0.3.4",
  "lance",
  "lance-core",
+ "lance-index",
  "lance-io",
  "object_store",
  "tempfile",
