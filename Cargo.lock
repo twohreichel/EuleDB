@@ -1710,6 +1710,7 @@ dependencies = [
  "lance-index",
  "lance-io",
  "object_store",
+ "roaring",
  "tempfile",
  "thiserror",
  "tokio",
