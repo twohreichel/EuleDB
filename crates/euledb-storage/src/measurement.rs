@@ -46,6 +46,69 @@ impl RowsExamined {
     }
 }
 
+/// A set of row ids, held as a compressed bitmap.
+///
+/// **What** — the rows a predicate, or a combination of predicates, selected. **Why a set rather than a
+/// list** — combining the answers of several predicates is set algebra, and a compressed bitmap does
+/// intersection and union over millions of ids without materialising either side. **Why a type of our
+/// own** — the bitmap library is an implementation detail, and returning its type here would put it in
+/// this crate's public API and make it permanent.
+///
+/// Iteration is in ascending id order, which is a property of the bitmap rather than a promise about the
+/// rows: a row id is not a key, and its order carries no meaning a caller should read into
+/// ([`RowId`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RowIdSet(roaring::RoaringTreemap);
+
+impl RowIdSet {
+    /// How many rows are in the set.
+    #[must_use]
+    pub fn len(&self) -> u64 {
+        self.0.len()
+    }
+
+    /// Whether the set holds no rows at all.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Whether one row is in the set.
+    #[must_use]
+    pub fn contains(&self, row: RowId) -> bool {
+        self.0.contains(row.get())
+    }
+
+    /// The rows, in ascending id order.
+    pub fn iter(&self) -> impl Iterator<Item = RowId> + '_ {
+        self.0.iter().map(RowId::new)
+    }
+}
+
+impl FromIterator<RowId> for RowIdSet {
+    fn from_iter<I: IntoIterator<Item = RowId>>(rows: I) -> Self {
+        Self(rows.into_iter().map(RowId::get).collect())
+    }
+}
+
+/// Every row that is in all of the sets.
+///
+/// Takes the first set apart from the rest so that there is no empty case: an intersection of nothing
+/// has no answer a set can carry — the identity is the universe, which is not enumerable — and a branch
+/// no caller can reach is a branch no test can defend.
+pub(crate) fn intersect_all(first: RowIdSet, rest: Vec<RowIdSet>) -> RowIdSet {
+    RowIdSet(rest.into_iter().fold(first.0, |kept, next| kept & next.0))
+}
+
+/// Every row that is in any of the sets.
+///
+/// Shaped like [`intersect_all`] for symmetry rather than necessity: a union of nothing *is* the empty
+/// set, so this one could take a list. Two functions that answer mirror questions taking different
+/// arguments would be a needless thing to remember.
+pub(crate) fn union_all(first: RowIdSet, rest: Vec<RowIdSet>) -> RowIdSet {
+    RowIdSet(rest.into_iter().fold(first.0, |all, next| all | next.0))
+}
+
 /// Which way an ordering runs.
 ///
 /// An enum rather than a boolean, so a call site reads as what it means instead of as `true`.

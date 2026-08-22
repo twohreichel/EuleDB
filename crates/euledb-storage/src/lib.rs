@@ -31,7 +31,7 @@ pub use compression::{Compression, InvalidZstdLevel, ZstdLevel};
 pub use crypto::{DataKeyId, Keyring, KeyringError};
 pub use definition::TableDefinition;
 pub use error::{Error, Result};
-pub use measurement::{Measured, Order, RowId, RowsExamined};
+pub use measurement::{Measured, Order, RowId, RowIdSet, RowsExamined};
 pub use mutation::{Assignment, Deleted, Predicate, Updated};
 pub use schema::{SchemaMismatch, TableSchema};
 pub use store::{LanceStore, StorageError, TableStore};
