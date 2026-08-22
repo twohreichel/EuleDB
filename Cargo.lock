@@ -1915,6 +1915,7 @@ name = "euledb-embed"
 version = "0.0.0"
 dependencies = [
  "euledb-corpus",
+ "euledb-storage",
  "tempfile",
  "thiserror",
  "tokenizers",
@@ -1931,6 +1932,8 @@ dependencies = [
  "arrow-schema",
  "async-trait",
  "bytes",
+ "euledb-corpus",
+ "euledb-embed",
  "futures-util",
  "getrandom 0.3.4",
  "hmac",
@@ -1938,6 +1941,7 @@ dependencies = [
  "lance-core",
  "lance-index",
  "lance-io",
+ "lance-linalg",
  "object_store",
  "roaring",
  "sha2",

@@ -94,6 +94,8 @@ lance-core = { version = "=10.0.0", default-features = false }
 # naming which kind, so the enum comes from here — and it has to be the same version as lance, or it is
 # a different enum.
 lance-index = { version = "=10.0.0", default-features = false }
+# The distance types the vector index is parameterised by. Same exact pin, same reason.
+lance-linalg = { version = "=10.0.0", default-features = false }
 arrow-schema = "58"
 # TryStreamExt, to collect a scan. Already in the tree through lance, so this adds nothing.
 futures-util = { version = "0.3", default-features = false }
