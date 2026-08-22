@@ -15,7 +15,52 @@ pub struct TableSchema {
     declared: SchemaRef,
 }
 
+/// The field-metadata key marking a column as auto-embedding.
+///
+/// Persisted with the table, like the compression setting, because a later insert through a fresh handle
+/// has to know to embed without being told again.
+const AUTO_EMBEDDING_KEY: &str = "euledb:auto-embedding";
+
 impl TableSchema {
+    /// Declare that a column embeds itself on every insert and update.
+    ///
+    /// **Why on the schema** — which column carries embeddings is part of the table's shape, and it has to
+    /// survive the handle that declared it. A caller who inserts must not have to remember it, and a
+    /// second process opening the same table must not be able to forget it.
+    #[must_use]
+    pub fn auto_embedding(self, column: &str) -> Self {
+        let fields: Vec<_> = self
+            .declared
+            .fields()
+            .iter()
+            .map(|field| {
+                if field.name() != column {
+                    return field.as_ref().clone();
+                }
+                let mut metadata = field.metadata().clone();
+                metadata.insert(AUTO_EMBEDDING_KEY.to_owned(), "true".to_owned());
+                field.as_ref().clone().with_metadata(metadata)
+            })
+            .collect();
+        Self {
+            declared: std::sync::Arc::new(arrow_schema::Schema::new_with_metadata(
+                fields,
+                self.declared.metadata().clone(),
+            )),
+        }
+    }
+
+    /// The columns that embed themselves.
+    #[must_use]
+    pub fn auto_embedding_columns(&self) -> Vec<String> {
+        self.declared
+            .fields()
+            .iter()
+            .filter(|field| field.metadata().contains_key(AUTO_EMBEDDING_KEY))
+            .map(|field| field.name().clone())
+            .collect()
+    }
+
     /// Declare a table's shape.
     ///
     /// ```
