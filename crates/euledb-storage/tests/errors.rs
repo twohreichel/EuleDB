@@ -124,6 +124,13 @@ async fn no_public_call_panics_on_bad_input() {
     );
     assert_refused(
         store
+            .row_ids_all("documents", &[Predicate::new("kein_feld = 1")])
+            .await,
+        "documents",
+        "combining a predicate naming a column that is not there",
+    );
+    assert_refused(
+        store
             .scan_ordered(
                 "documents",
                 &Predicate::new("id = 1"),
