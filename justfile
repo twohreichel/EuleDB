@@ -65,6 +65,10 @@ publish-check:
 corpus:
     python3 scripts/fetch-corpus.py
 
+# Fetch the embedding model at its pinned revision. Half a gigabyte, once.
+model:
+    python3 scripts/fetch-model.py
+
 # Lint the GitHub Actions workflows and the Dependabot policy. Needs actionlint and zizmor on PATH.
 lint-workflows:
     actionlint -color

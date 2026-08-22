@@ -7,7 +7,7 @@ members = ["crates/*"]
 [workspace.package]
 version = "0.0.0"
 edition = "2024"
-rust-version = "1.91.0"
+rust-version = "1.94.0"
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/twohreichel/EuleDB"
 categories = ["database-implementations", "database"]
@@ -29,6 +29,9 @@ debug = "line-tables-only"
 # cargo refuses a path dependency without one. Release Please rewrites the version on a release, so it
 # tracks the workspace version rather than being maintained by hand.
 euledb-storage = { path = "crates/euledb-storage", version = "0.0.0" }
+# Test fixtures and the embedding path, both unpublished, so a bare path dependency is enough.
+euledb-corpus = { path = "crates/euledb-corpus" }
+euledb-embed = { path = "crates/euledb-embed" }
 # The interchange contract. arrow-schema and arrow-array rather than the `arrow` facade: the storage
 # layer needs the schema types and RecordBatch, not the compute kernels, the CSV reader or the FFI
 # layer. A consumer using the facade gets the same types, because the facade re-exports these.
@@ -39,6 +42,18 @@ euledb-storage = { path = "crates/euledb-storage", version = "0.0.0" }
 # The exact pin on lance is what keeps this alignment from drifting under a patch release.
 # Envelope encryption (ADR-002). RustCrypto throughout: aes-gcm carries an NCC Group audit with no
 # significant findings, and argon2 is the reference implementation of the variant the RFC recommends.
+# The embedding model, run as its own ONNX graph in pure Rust. Chosen over `ort` on supply-chain
+# grounds and recorded in the spec: ort's default features download a prebuilt C++ runtime at build
+# time over TLS, which is outside every gate this project has — cargo-deny sees Rust crates, and CI
+# pins third-party actions to commit SHAs precisely to avoid unverified mutable artefacts. candle-onnx
+# needs `protoc`, which `lance` already requires, so the build-time cost is one this project pays anyway.
+candle-core = { version = "0.11", default-features = false }
+candle-onnx = "0.11"
+# The model's own tokenizer, loaded from the file the model ships with. Writing an XLM-R tokenizer by
+# hand would be a different tokenizer, and a different tokenizer is a different embedding.
+# Pinned to what candle-core already depends on. Asking for a newer minor would put two copies
+# of a tokenizer — and its 250 000-entry vocabulary handling — in one binary for nothing.
+tokenizers = { version = "0.22", default-features = false, features = ["onig"] }
 aes-gcm = "0.11"
 # Capability-token signatures (AC-28). HMAC-SHA256 rather than a signature scheme: this document
 # describes no second party, so an issuer that can also verify costs nothing, and it avoids a key pair to
