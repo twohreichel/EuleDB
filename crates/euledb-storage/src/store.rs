@@ -11,6 +11,7 @@ use arrow_array::{RecordBatch, RecordBatchIterator};
 use futures_util::TryStreamExt;
 
 use crate::crypto::{BlockSize, EncryptingProvider};
+use crate::measurement::{Measured, RowId, widest_scan};
 use crate::writer_lock::{LockError, WriteLock};
 use crate::{Assignment, Compression, Deleted, Keyring, Predicate, TableDefinition, Updated};
 
@@ -131,6 +132,104 @@ impl LanceStore {
             write_lock: Some(Arc::new(lock)),
             session: None,
         })
+    }
+
+    /// The row ids of every row matching a predicate.
+    ///
+    /// A row id is the format's identity for a row, so this is what an index points at and what a set
+    /// of candidates is built from. Rows are not read: only their identities come back.
+    ///
+    /// # Errors
+    ///
+    /// Reports the failure when the table does not exist, or when the predicate cannot be applied to
+    /// it — an unknown column, or text that is not an expression.
+    pub async fn row_ids(&self, table: &str, matching: &Predicate) -> crate::Result<Vec<RowId>> {
+        let dataset = self.open(table).await?;
+        let mut scanner = dataset.scan();
+        Self::select_row_ids(&mut scanner, table, matching)?;
+
+        let batches = scanner
+            .try_into_stream()
+            .await
+            .map_err(|cause| StorageError::backend("start a scan of the table", table, cause))?
+            .try_collect::<Vec<RecordBatch>>()
+            .await
+            .map_err(|cause| StorageError::backend("read the table", table, cause))?;
+
+        let mut ids = Vec::new();
+        for batch in &batches {
+            let column = batch.column_by_name(lance_core::ROW_ID).ok_or_else(|| {
+                StorageError::backend(
+                    "read the row ids of",
+                    table,
+                    "the scan returned no row-id column",
+                )
+            })?;
+            let raw = column
+                .as_any()
+                .downcast_ref::<arrow_array::UInt64Array>()
+                .ok_or_else(|| {
+                    StorageError::backend(
+                        "read the row ids of",
+                        table,
+                        "the row-id column was not the expected type",
+                    )
+                })?;
+            ids.extend((0..batch.num_rows()).map(|row| RowId::new(raw.value(row))));
+        }
+        Ok(ids)
+    }
+
+    /// The row ids of every row matching a predicate, and how many rows answering it examined.
+    ///
+    /// **A diagnostic, not a hot path.** Measuring means running the plan a second time under the
+    /// engine's analysis, so this costs roughly twice what [`LanceStore::row_ids`] costs and exists to
+    /// answer one question: did this query use an index, or walk the table?
+    ///
+    /// # Errors
+    ///
+    /// As [`LanceStore::row_ids`], plus the failure when the plan cannot be analysed.
+    pub async fn row_ids_measured(
+        &self,
+        table: &str,
+        matching: &Predicate,
+    ) -> crate::Result<Measured<Vec<RowId>>> {
+        let value = self.row_ids(table, matching).await?;
+
+        let dataset = self.open(table).await?;
+        let mut scanner = dataset.scan();
+        Self::select_row_ids(&mut scanner, table, matching)?;
+        let plan = scanner
+            .analyze_plan()
+            .await
+            .map_err(|cause| StorageError::backend("analyse the plan for", table, cause))?;
+
+        Ok(Measured {
+            value,
+            rows_examined: widest_scan(&plan),
+        })
+    }
+
+    /// Narrow a scan to the row ids matching a predicate, and to nothing else.
+    ///
+    /// One place, because the measured and unmeasured forms have to ask the same question — a plan
+    /// analysed with a different projection than the one that ran would measure the wrong query.
+    ///
+    /// No data columns: the identities are the answer, and reading payload only to discard it would
+    /// make every candidate set cost a full row read.
+    fn select_row_ids(
+        scanner: &mut lance::dataset::scanner::Scanner,
+        table: &str,
+        matching: &Predicate,
+    ) -> crate::Result<()> {
+        scanner
+            .filter(matching.as_str())
+            .map_err(|cause| StorageError::backend("apply the predicate to", table, cause))?;
+        scanner.with_row_id();
+        scanner
+            .project::<&str>(&[])
+            .map_err(|cause| StorageError::backend("project no columns of", table, cause))?;
+        Ok(())
     }
 
     /// Refuse a writing operation on a store that was opened for reading.
