@@ -13,9 +13,14 @@ Your data stays yours.
 
 ## Status
 
-**Early development. Nothing works yet.** The published crate is a placeholder, the public API is
-deliberately empty, and the storage foundation is still being built. There is nothing here to use today —
-this section will say otherwise when that changes.
+**Early development.** The storage foundation works: tables with a declared schema, insert, scan,
+update, delete and drop, compressed, encrypted at rest with AES-256-GCM under a rotatable key, one
+writer at a time and any number of readers. Nothing has been published to a registry yet.
+
+**What the name promises is not built.** There is no vector search, no full-text search, no fusion of
+the two, and no plain-language query path — those are the phases after this one. Do not choose EuleDB
+today for what the first paragraph of this file describes. The cryptographic design has not been
+audited.
 
 ## What it is for
 
