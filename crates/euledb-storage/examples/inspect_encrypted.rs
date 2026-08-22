@@ -65,9 +65,11 @@ async fn write_table(encrypted: bool, count: i64) -> (u64, std::time::Duration) 
     let root = tempfile::tempdir().expect("tmp");
     let keyring = Keyring::create("passphrase").expect("keyring");
     let store = if encrypted {
-        LanceStore::new(root.path()).encrypted(&keyring)
+        LanceStore::open_for_writing(root.path())
+            .expect("write role")
+            .encrypted(&keyring)
     } else {
-        LanceStore::new(root.path())
+        LanceStore::open_for_writing(root.path()).expect("write role")
     };
     let started = Instant::now();
     store.create_table("t", &table()).await.expect("create");
@@ -87,7 +89,9 @@ async fn main() {
     println!("\n=== which objects are framed (20 000 rows, compression off) ===");
     let root = tempfile::tempdir().expect("tmp");
     let keyring = Keyring::create("passphrase").expect("keyring");
-    let store = LanceStore::new(root.path()).encrypted(&keyring);
+    let store = LanceStore::open_for_writing(root.path())
+        .expect("write role")
+        .encrypted(&keyring);
     store.create_table("t", &table()).await.expect("create");
     store.append("t", &rows(20_000)).await.expect("append");
     for (name, size, framed) in walk(root.path()) {

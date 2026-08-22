@@ -99,6 +99,12 @@ fn every_member_manifest_states_the_registry_metadata() {
             .and_then(toml::Value::as_table)
             .unwrap_or_else(|| panic!("{} has no [package] table", manifest_path.display()));
 
+        // Registry metadata is meaningless for a crate that is never published. Skipping it here is not
+        // a loophole: `publish = false` is itself the statement, and it is checked rather than assumed.
+        if package.get("publish").and_then(toml::Value::as_bool) == Some(false) {
+            continue;
+        }
+
         for key in REQUIRED {
             // Either stated outright or inherited with `key.workspace = true`. Whether an inherited
             // key actually resolves is cargo's business: it refuses to load the manifest at all when
@@ -110,6 +116,66 @@ fn every_member_manifest_states_the_registry_metadata() {
                 manifest_path.display(),
             );
         }
+    }
+}
+
+#[test]
+fn documentation_that_ships_names_no_criterion_id() {
+    // A `///` or `//!` comment reaches docs.rs, where "AC-70" is a reference the reader cannot follow.
+    // The statement is what a consumer needs; the traceability belongs in the ticket and the commit.
+    // Ordinary `//` comments are internal and may cite freely.
+    let mut leaks = Vec::new();
+    for dir in member_crate_dirs() {
+        let mut sources = vec![dir.join("src")];
+        while let Some(path) = sources.pop() {
+            for entry in fs::read_dir(&path).into_iter().flatten().flatten() {
+                let child = entry.path();
+                if child.is_dir() {
+                    sources.push(child);
+                    continue;
+                }
+                if child.extension().is_none_or(|ext| ext != "rs") {
+                    continue;
+                }
+                let Ok(source) = fs::read_to_string(&child) else {
+                    continue;
+                };
+                for (number, line) in source.lines().enumerate() {
+                    let trimmed = line.trim_start();
+                    let ships = trimmed.starts_with("///") || trimmed.starts_with("//!");
+                    if ships && line.contains("AC-") {
+                        leaks.push(format!("{}:{}", child.display(), number + 1));
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        leaks.is_empty(),
+        "documentation that ships to docs.rs cites a criterion id the reader cannot resolve:\n  {}",
+        leaks.join("\n  "),
+    );
+}
+
+#[test]
+fn every_member_is_either_publishable_or_says_it_is_not() {
+    // The middle ground is the dangerous one: a crate with neither the metadata nor an explicit
+    // `publish = false` would be discovered at a release tag, which is the worst moment.
+    for dir in member_crate_dirs() {
+        let manifest_path = dir.join("Cargo.toml");
+        let manifest = read_toml(&manifest_path);
+        let package = manifest
+            .get("package")
+            .and_then(toml::Value::as_table)
+            .unwrap_or_else(|| panic!("{} has no [package] table", manifest_path.display()));
+
+        let opted_out = package.get("publish").and_then(toml::Value::as_bool) == Some(false);
+        let publishable = package.contains_key("description") && package.contains_key("readme");
+        assert!(
+            opted_out || publishable,
+            "{} neither carries publish metadata nor declares `publish = false`",
+            manifest_path.display(),
+        );
     }
 }
 

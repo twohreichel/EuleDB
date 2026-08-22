@@ -77,7 +77,9 @@ async fn encrypted_rows_survive_a_drop_and_reopen_unchanged() {
     let written = rows();
 
     {
-        let store = LanceStore::new(root.path()).encrypted(&keyring);
+        let store = LanceStore::open_for_writing(root.path())
+            .expect("taking the write role must succeed")
+            .encrypted(&keyring);
         store
             .create_table("documents", &uncompressed())
             .await
@@ -109,7 +111,8 @@ async fn the_marker_is_on_disk_without_encryption() {
     // The control. Without it, the test below passes against a table that was never encrypted — which
     // is exactly what happened the first time.
     let root = tempfile::tempdir().expect("a temporary directory is available");
-    let store = LanceStore::new(root.path());
+    let store =
+        LanceStore::open_for_writing(root.path()).expect("taking the write role must succeed");
     store
         .create_table("documents", &uncompressed())
         .await
@@ -126,7 +129,9 @@ async fn the_marker_is_on_disk_without_encryption() {
 async fn the_marker_is_not_on_disk_with_encryption() {
     let root = tempfile::tempdir().expect("a temporary directory is available");
     let keyring = Keyring::create(PASSPHRASE).expect("create");
-    let store = LanceStore::new(root.path()).encrypted(&keyring);
+    let store = LanceStore::open_for_writing(root.path())
+        .expect("taking the write role must succeed")
+        .encrypted(&keyring);
     store
         .create_table("documents", &uncompressed())
         .await
@@ -149,7 +154,9 @@ async fn another_key_cannot_read_the_table() {
     let root = tempfile::tempdir().expect("a temporary directory is available");
     let keyring = Keyring::create(PASSPHRASE).expect("create");
     {
-        let store = LanceStore::new(root.path()).encrypted(&keyring);
+        let store = LanceStore::open_for_writing(root.path())
+            .expect("taking the write role must succeed")
+            .encrypted(&keyring);
         store
             .create_table("documents", &uncompressed())
             .await
@@ -175,7 +182,8 @@ async fn another_key_cannot_read_the_table() {
 async fn a_plaintext_table_is_not_read_as_encrypted() {
     let root = tempfile::tempdir().expect("a temporary directory is available");
     {
-        let store = LanceStore::new(root.path());
+        let store =
+            LanceStore::open_for_writing(root.path()).expect("taking the write role must succeed");
         store
             .create_table("documents", &uncompressed())
             .await
@@ -209,7 +217,9 @@ async fn a_store_rooted_at_a_relative_path_still_works() {
     std::env::set_current_dir(root.path()).expect("the temporary directory is enterable");
 
     let keyring = Keyring::create(PASSPHRASE).expect("create");
-    let store = LanceStore::new("./relative-root").encrypted(&keyring);
+    let store = LanceStore::open_for_writing("./relative-root")
+        .expect("taking the write role must succeed")
+        .encrypted(&keyring);
     let outcome = async {
         store.create_table("documents", &uncompressed()).await?;
         store.append("documents", &rows()).await?;

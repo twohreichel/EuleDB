@@ -92,7 +92,9 @@ async fn rotating_the_data_key_leaves_earlier_rows_readable() {
     let mut keyring = Keyring::create(PASSPHRASE).expect("create");
 
     {
-        let store = LanceStore::new(root.path()).encrypted(&keyring);
+        let store = LanceStore::open_for_writing(root.path())
+            .expect("taking the write role must succeed")
+            .encrypted(&keyring);
         store
             .create_table("documents", &uncompressed())
             .await
@@ -109,7 +111,9 @@ async fn rotating_the_data_key_leaves_earlier_rows_readable() {
 
     // The rows written before the rotation are still sealed under the retired key, and the rows written
     // after are sealed under the new one. Both have to come back.
-    let store = LanceStore::new(root.path()).encrypted(&keyring);
+    let store = LanceStore::open_for_writing(root.path())
+        .expect("taking the write role must succeed")
+        .encrypted(&keyring);
     store
         .append("documents", &batch(500, 500))
         .await
@@ -130,7 +134,9 @@ async fn rotating_the_data_key_rewrites_no_payload() {
     let root = tempfile::tempdir().expect("a temporary directory is available");
     let mut keyring = Keyring::create(PASSPHRASE).expect("create");
 
-    let store = LanceStore::new(root.path()).encrypted(&keyring);
+    let store = LanceStore::open_for_writing(root.path())
+        .expect("taking the write role must succeed")
+        .encrypted(&keyring);
     store
         .create_table("documents", &uncompressed())
         .await
@@ -154,7 +160,12 @@ async fn rotating_the_data_key_rewrites_no_payload() {
     );
 
     // And writing after the rotation adds a file rather than rewriting the old one.
-    let rotated = LanceStore::new(root.path()).encrypted(&keyring);
+    //
+    // The rotated store is built from the one that already holds the write role, not by taking the role
+    // again: rotating a key must not mean releasing the database, or another process could take it in
+    // the gap. `encrypted` consumes the store and carries the lock over, which is what makes
+    // rotate-and-keep-writing possible at all.
+    let rotated = store.encrypted(&keyring);
     rotated
         .append("documents", &batch(500, 500))
         .await
@@ -182,7 +193,9 @@ async fn changing_the_passphrase_leaves_the_data_readable_and_untouched() {
     let written = batch(0, 500);
 
     {
-        let store = LanceStore::new(root.path()).encrypted(&keyring);
+        let store = LanceStore::open_for_writing(root.path())
+            .expect("taking the write role must succeed")
+            .encrypted(&keyring);
         store
             .create_table("documents", &uncompressed())
             .await

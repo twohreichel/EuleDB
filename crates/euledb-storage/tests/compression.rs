@@ -79,7 +79,8 @@ fn data_bytes(root: &Path) -> u64 {
 /// Write the corpus into a fresh store with the given compression, and report the bytes it took.
 async fn bytes_written_with(compression: Compression) -> u64 {
     let root = tempfile::tempdir().expect("a temporary directory is available");
-    let store = LanceStore::new(root.path());
+    let store =
+        LanceStore::open_for_writing(root.path()).expect("taking the write role must succeed");
     let definition = TableDefinition::new(documents()).with_compression(compression);
     store
         .create_table("documents", &definition)
@@ -173,7 +174,8 @@ async fn rows_still_come_back_unchanged_when_compressed() {
     let root = tempfile::tempdir().expect("a temporary directory is available");
     let written = corpus(5000);
     {
-        let store = LanceStore::new(root.path());
+        let store =
+            LanceStore::open_for_writing(root.path()).expect("taking the write role must succeed");
         store
             .create_table("documents", &TableDefinition::new(documents()))
             .await

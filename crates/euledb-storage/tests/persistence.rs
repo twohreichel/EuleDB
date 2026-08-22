@@ -44,7 +44,8 @@ async fn rows_survive_a_drop_and_reopen_unchanged() {
     let written = rows();
 
     {
-        let store = LanceStore::new(root.path());
+        let store =
+            LanceStore::open_for_writing(root.path()).expect("taking the write role must succeed");
         store
             .create_table("documents", &TableDefinition::new(documents()))
             .await
@@ -86,7 +87,8 @@ fn later_row() -> RecordBatch {
 #[tokio::test]
 async fn a_second_append_adds_to_the_first_instead_of_replacing_it() {
     let root = tempfile::tempdir().expect("a temporary directory is available");
-    let store = LanceStore::new(root.path());
+    let store =
+        LanceStore::open_for_writing(root.path()).expect("taking the write role must succeed");
     store
         .create_table("documents", &TableDefinition::new(documents()))
         .await
