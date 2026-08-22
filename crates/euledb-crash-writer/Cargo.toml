@@ -1,0 +1,24 @@
+[package]
+name = "euledb-crash-writer"
+description = "Test fixture: writes to a database until it is killed. Not part of the product."
+# Not published. It exists so that a test can kill a real writing process at a real point in a real
+# commit, which is what the crash-safety criterion asks for — a simulated failure would prove that the
+# simulation is consistent, nothing more.
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+arrow-array.workspace = true
+arrow-schema.workspace = true
+euledb-storage = { path = "../euledb-storage" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
