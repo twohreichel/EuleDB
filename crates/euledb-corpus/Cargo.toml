@@ -1,0 +1,21 @@
+[package]
+name = "euledb-corpus"
+description = "The reference corpus this project's benchmarks are measured against. Not published: it exists to make the numbers reproducible, not to be depended on."
+# Not published. It embeds a slice of a CC BY-SA corpus and reads a file from the repository root, so it
+# could not work from a published .crate and has no meaning outside this workspace.
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+sha2.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
