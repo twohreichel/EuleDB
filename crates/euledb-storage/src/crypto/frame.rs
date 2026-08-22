@@ -10,7 +10,7 @@
 //! └──────────────────────────────────────────┴───────────────────┴───────────────────┘
 //! ```
 //!
-//! The **key id** is what makes rotation possible without rewriting anything (AC-21). An object records
+//! The **key id** is what makes rotation possible without rewriting anything. An object records
 //! which data key sealed it, so a keyring that has rotated still opens it — and a new object is sealed
 //! under the new key. The id is authenticated along with the block index, so pointing an object at
 //! another key fails the tag rather than reading as something else.

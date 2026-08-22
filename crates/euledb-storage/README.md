@@ -7,6 +7,25 @@ depends on it, not because it is meant to be used directly.
 behind a trait boundary precisely so that it stays replaceable, and a caller that reaches past the
 facade would make it permanent. This crate carries no stability promise of its own.
 
+## Readers, writers, and what happens after a crash
+
+**Any number of readers, at most one writer, per database directory.**
+
+- Opening for reading takes no lock and never waits. A writer does not block readers.
+- Opening for writing takes the write role and holds it until the store is dropped. **A second writer is
+  refused immediately**, with an error naming the database — not queued. A local-first database that
+  blocks forever on a lock held by a process nobody can see is worse than one that says so.
+- A writing call on a store opened for reading is refused, by name.
+
+The role is an advisory lock on an open file handle, not a marker file. The difference shows up on a
+crash: the operating system releases the lock when the process dies, however it dies, whereas a marker
+would outlive the crash and lock the database out until somebody worked out which file to delete.
+
+**An interrupted write leaves the database at the state before it or the state after it.** Each append is
+one commit, so a writer killed mid-write leaves a whole number of appends behind — never a partial one.
+That is tested rather than argued: a fixture process writes in a loop and is killed with no warning at
+five different points, and the database is reopened and checked each time.
+
 ## Compression and string encoding
 
 Stated rather than left to be discovered, because it decides how much space your data takes and there

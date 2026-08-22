@@ -12,6 +12,7 @@ mod definition;
 mod mutation;
 mod schema;
 mod store;
+mod writer_lock;
 
 pub use compression::{Compression, InvalidZstdLevel, ZstdLevel};
 pub use crypto::{DataKeyId, Keyring, KeyringError};
@@ -19,3 +20,4 @@ pub use definition::TableDefinition;
 pub use mutation::{Assignment, Deleted, Predicate, Updated};
 pub use schema::{SchemaMismatch, TableSchema};
 pub use store::{LanceStore, StorageError, TableStore};
+pub use writer_lock::{LockError, WriteLock};
