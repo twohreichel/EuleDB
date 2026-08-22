@@ -7,7 +7,7 @@ size: M
 context_budget: 3000
 safety: first published surface
 detail: full
-status: in-progress
+status: done
 ---
 
 ## Goal
@@ -56,8 +56,34 @@ one obvious home instead of growing private channels.
 just format && just lint && just test && just qa
 ```
 
+## What landed
+
+`euledb::Database` with the six operations, `open` / `open_for_writing` and their `_with` variants for a
+configuration, and `encrypted` for a keyring. `euledb::Config` carries the tunables — today that is
+compression, with its default and its effect stated on the method that sets it. The interchange types
+are re-exported (`arrow_array`, `arrow_schema`), so a caller does not have to pin the same arrow major
+by hand.
+
+`insert` rather than `append`, because that is the word AC-23 uses. The layer below keeps `append`,
+since that is what it does — rows are added, never merged — and the difference is documented on the
+method rather than left to look like an inconsistency.
+
+`Database` is partly a forwarding type, deliberately. What it earns: it keeps the on-disk format's name
+out of the published API, it holds the configuration and applies it when a table is created, and it puts
+the write role in the type system rather than in a flag. A new invariant test enforces the first of
+those — using the store type inside the facade is fine, re-exporting it is not.
+
+The per-crate README claimed to be "a placeholder at version 0.1.0" with an empty API. Both halves were
+false after this change, and the version was already wrong. Both READMEs now say what works and, more
+importantly, what the name promises but does not yet do.
+
 ## Acceptance
 
-- [x] AC-23 — drop: `drop_table`, four behaviours, four mutations caught.
-- [ ] AC-23 — the six operations exposed through the `euledb` crate, doc examples executed.
-- [ ] AC-74 — one documented configuration mechanism, each tunable with a default and an effect.
+- [x] AC-23 — the six operations exposed through the `euledb` crate: `create_table`, `insert`, `scan`,
+      `update`, `delete`, `drop_table`. Two doc examples compiled and executed by the suite.
+- [x] AC-74 — one documented configuration mechanism, `Config`, with a stated default and a stated
+      effect. Its effect is measured on disk, because a knob nobody can observe is decoration.
+- [x] `drop_table` in the storage layer (PR #18), four behaviours, four mutations caught.
+- [x] Five mutations on the facade, all caught: the configured compression never reaching the table,
+      `with_compression` discarding its argument, a silent no-op `insert`, an `update` reporting a count
+      without touching a row, and a no-op `encrypted`.
