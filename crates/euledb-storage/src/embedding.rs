@@ -22,6 +22,17 @@ pub trait Embedder: std::fmt::Debug + Send + Sync {
     /// Whatever the implementation's own failure is, as a message. The storage layer passes it through
     /// rather than interpreting it.
     fn embed_passage(&self, text: &str) -> Result<Vec<Vec<f32>>, String>;
+
+    /// Embed a query.
+    ///
+    /// **A separate method, not the same one.** The model these vectors come from is trained with a
+    /// different prefix for a query than for stored text, and using the wrong one costs measurable
+    /// recall. Making the two indistinguishable at the port would make that mistake invisible.
+    ///
+    /// # Errors
+    ///
+    /// As [`Embedder::embed_passage`].
+    fn embed_query(&self, text: &str) -> Result<Vec<f32>, String>;
 }
 
 /// One vector, and the row it was made from.

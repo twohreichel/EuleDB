@@ -532,6 +532,23 @@ impl LanceStore {
         self
     }
 
+    /// Turn a query into the vector a search takes.
+    ///
+    /// Here rather than at the caller: a query and a stored passage go to the model under different
+    /// prefixes, and a caller who has to know that will eventually get it wrong. The handle already holds
+    /// the embedder for the auto-embedding path, so this is the same knowledge used from the read side.
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError::NoEmbedder`] when this handle was opened without one, and
+    /// [`StorageError::QueryNotEmbeddable`] when the embedder itself failed.
+    pub fn embed_query(&self, query: &str) -> crate::Result<Vec<f32>> {
+        let embedder = self.embedder.as_ref().ok_or(StorageError::NoEmbedder)?;
+        embedder
+            .embed_query(query)
+            .map_err(|cause| StorageError::QueryNotEmbeddable { cause }.into())
+    }
+
     /// The vectors of an auto-embedding column, in row and chunk order.
     ///
     /// # Errors
@@ -1446,6 +1463,20 @@ pub enum StorageError {
         operation: &'static str,
         /// The table it was aimed at.
         table: String,
+    },
+
+    /// A semantic query was asked of a database that cannot embed.
+    ///
+    /// Its own variant because the fix is a single specific act — open the database with an embedder —
+    /// and a message that names it saves a caller reading the source.
+    #[error("this database has no embedder: open it with `embedding(..)` to run a semantic query")]
+    NoEmbedder,
+
+    /// The embedder could not turn a query into a vector.
+    #[error("the query could not be embedded: {cause}")]
+    QueryNotEmbeddable {
+        /// What the embedder said.
+        cause: String,
     },
 
     /// A query vector is not the width the stored vectors are.
