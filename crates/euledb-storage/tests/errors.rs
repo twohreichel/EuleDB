@@ -163,6 +163,17 @@ async fn no_public_call_panics_on_bad_input() {
 
     // Two ways for a keyfile to be wrong, and they are worth telling apart: the first byte is a format
     // version, so text fails on the version before anything else is even looked at.
+    // A gated handle refuses without touching the table, so this is not a Backend refusal.
+    let gated =
+        LanceStore::new(root.path()).gated(&Keyring::create("x").expect("keyring"), Vec::new());
+    assert!(
+        matches!(
+            gated.scan("documents").await,
+            Err(Error::Storage(StorageError::NotPermitted { .. })),
+        ),
+        "a gated handle with no token must refuse rather than panic",
+    );
+
     assert!(
         matches!(
             Keyring::open(b"nicht mal in der Naehe eines Keyfiles", "irgendwas"),
