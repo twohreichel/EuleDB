@@ -6,7 +6,7 @@
     reason = "in a test an unwrap IS the assertion, and its panic message is the failure narrative"
 )]
 
-use euledb_storage::{DataKeyId, Keyring, KeyringError};
+use euledb_storage::{DataKeyId, Error, Keyring, KeyringError};
 
 /// A passphrase of the kind a person actually types, not `"password"`.
 const PASSPHRASE: &str = "korrektes-pferd-batterie-heftklammer";
@@ -35,7 +35,7 @@ fn the_wrong_passphrase_fails_closed_with_a_distinct_error() {
         .expect_err("one character wrong must not open the keyring");
 
     assert!(
-        matches!(error, KeyringError::WrongPassphrase),
+        matches!(error, Error::Keyring(KeyringError::WrongPassphrase)),
         "a wrong passphrase must be its own error a caller can react to, got: {error:?}",
     );
 }
@@ -53,7 +53,7 @@ fn a_tampered_keyfile_fails_closed() {
 
     let error = Keyring::open(&keyfile, PASSPHRASE).expect_err("a tampered keyfile must not open");
     assert!(
-        matches!(error, KeyringError::WrongPassphrase),
+        matches!(error, Error::Keyring(KeyringError::WrongPassphrase)),
         "tampering must fail closed, got: {error:?}",
     );
 }
@@ -67,7 +67,7 @@ fn a_truncated_keyfile_is_rejected_as_malformed() {
     let error = Keyring::open(&keyfile[..keyfile.len() / 2], PASSPHRASE)
         .expect_err("half a keyfile is not a keyfile");
     assert!(
-        matches!(error, KeyringError::MalformedKeyfile { .. }),
+        matches!(error, Error::Keyring(KeyringError::MalformedKeyfile { .. })),
         "a truncated keyfile is malformed, not a wrong passphrase — a caller needs to tell those \
          apart to know whether to re-prompt. Got: {error:?}",
     );
@@ -151,9 +151,7 @@ fn a_keyfile_with_trailing_bytes_is_rejected_for_its_length() {
 
     let error = Keyring::open(&keyfile, PASSPHRASE).expect_err("extra bytes are not a keyfile");
     assert!(
-        matches!(
-            error,
-            KeyringError::MalformedKeyfile { reason } if reason == "length is not a whole number of keys"
+        matches!(error, Error::Keyring(KeyringError::MalformedKeyfile { reason }) if reason == "length is not a whole number of keys"
         ),
         "a keyfile of the wrong length must say so rather than blaming the passphrase, got: {error:?}",
     );
@@ -278,7 +276,7 @@ fn changing_the_passphrase_keeps_every_data_key() {
     assert!(
         matches!(
             Keyring::open(&keyfile, PASSPHRASE),
-            Err(KeyringError::WrongPassphrase)
+            Err(Error::Keyring(KeyringError::WrongPassphrase))
         ),
         "the old passphrase still opens the keyring, so nothing was actually rotated",
     );

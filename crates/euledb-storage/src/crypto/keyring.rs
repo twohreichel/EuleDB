@@ -110,7 +110,7 @@ impl Keyring {
     /// [`KeyringError::Random`] if the platform's random source fails, [`KeyringError::Derivation`] if
     /// key derivation does. Neither is recoverable by retrying, and neither should be papered over with
     /// a weaker fallback.
-    pub fn create(passphrase: &str) -> Result<Self, KeyringError> {
+    pub fn create(passphrase: &str) -> crate::Result<Self> {
         let mut keys = BTreeMap::new();
         keys.insert(
             DataKeyId::FIRST,
@@ -137,15 +137,16 @@ impl Keyring {
     /// [`KeyringError::MalformedKeyfile`] when the bytes are not a keyfile at all, and
     /// [`KeyringError::WrongPassphrase`] when they are but the passphrase does not unwrap them. The two
     /// are separate because a caller reacts differently: re-prompt for one, do not for the other.
-    pub fn open(keyfile: &[u8], passphrase: &str) -> Result<Self, KeyringError> {
+    pub fn open(keyfile: &[u8], passphrase: &str) -> crate::Result<Self> {
         if keyfile.len() < PREFIX_LEN {
             return Err(KeyringError::MalformedKeyfile {
                 reason: "shorter than a keyfile header",
-            });
+            }
+            .into());
         }
         let (version, rest) = keyfile.split_at(1);
         if version[0] != VERSION {
-            return Err(KeyringError::UnsupportedVersion { found: version[0] });
+            return Err(KeyringError::UnsupportedVersion { found: version[0] }.into());
         }
         let (salt, rest) = rest.split_at(SALT_LEN);
         let (nonce, sealed) = rest.split_at(NONCE_LEN);
@@ -158,12 +159,14 @@ impl Keyring {
         if sealed.len() < smallest {
             return Err(KeyringError::MalformedKeyfile {
                 reason: "too short to hold even one key",
-            });
+            }
+            .into());
         }
         if !(sealed.len() - TAG_LEN - SET_HEADER_LEN).is_multiple_of(ENTRY_LEN) {
             return Err(KeyringError::MalformedKeyfile {
                 reason: "length is not a whole number of keys",
-            });
+            }
+            .into());
         }
         let salt: [u8; SALT_LEN] = salt
             .try_into()
@@ -225,7 +228,7 @@ impl Keyring {
     ///
     /// [`KeyringError::Random`] if the platform's random source fails, and
     /// [`KeyringError::KeySpaceExhausted`] after four billion rotations.
-    pub fn rotate_data_key(&mut self) -> Result<DataKeyId, KeyringError> {
+    pub fn rotate_data_key(&mut self) -> crate::Result<DataKeyId> {
         let next = self
             .keys
             .keys()
@@ -252,12 +255,12 @@ impl Keyring {
     ///
     /// [`KeyringError::Random`] if the platform's random source fails, [`KeyringError::Derivation`] if
     /// key derivation does.
-    pub fn change_passphrase(&mut self, passphrase: &str) -> Result<(), KeyringError> {
+    pub fn change_passphrase(&mut self, passphrase: &str) -> crate::Result<()> {
         // A new salt as well as a new key: reusing the salt would let a precomputation built against
         // the old passphrase carry over.
         getrandom::fill(&mut self.salt).map_err(|_| KeyringError::Random)?;
         self.kek = derive_key_encryption_key(passphrase, &self.salt)?;
-        self.reseal()
+        self.reseal().map_err(Into::into)
     }
 
     /// The id new writes are sealed under.

@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use arrow_array::{ArrayRef, Int64Array, RecordBatch};
 use arrow_schema::{DataType, Field, Schema};
-use euledb_storage::{LanceStore, StorageError, TableDefinition, TableSchema, TableStore};
+use euledb_storage::{Error, LanceStore, StorageError, TableDefinition, TableSchema, TableStore};
 
 fn counters() -> TableDefinition {
     TableDefinition::new(TableSchema::new(Schema::new(vec![Field::new(
@@ -34,7 +34,10 @@ async fn a_second_writer_is_refused_while_the_first_holds_the_database() {
         .expect_err("a second writer must be refused, not admitted and not left waiting");
 
     assert!(
-        matches!(error, StorageError::AlreadyOpenForWriting { .. }),
+        matches!(
+            error,
+            Error::Storage(StorageError::AlreadyOpenForWriting { .. })
+        ),
         "a second writer must be told exactly what is wrong, got: {error:?}",
     );
     drop(first);
@@ -113,7 +116,7 @@ async fn a_reader_refuses_to_write_and_says_so() {
         .expect_err("a store opened for reading must refuse to write");
 
     assert!(
-        matches!(error, StorageError::ReadOnly { .. }),
+        matches!(error, Error::Storage(StorageError::ReadOnly { .. })),
         "the refusal must name the reason rather than surfacing as something else: {error:?}",
     );
 }

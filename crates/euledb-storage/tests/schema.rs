@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use arrow_array::{ArrayRef, Int64Array, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema};
-use euledb_storage::{SchemaMismatch, TableSchema};
+use euledb_storage::{Error, SchemaMismatch, TableSchema};
 
 /// One column of a batch: its name, its data, and whether it permits null.
 type Column = (&'static str, ArrayRef, bool);
@@ -83,7 +83,7 @@ fn rejects_a_batch_missing_a_declared_column_and_names_it() {
         .expect_err("a batch missing a declared column must be refused");
 
     assert!(
-        matches!(&error, SchemaMismatch::MissingColumn { column } if column == "language"),
+        matches!(&error, Error::Schema(SchemaMismatch::MissingColumn { column }) if column == "language"),
         "expected a missing-column error naming `language`, got: {error:?}",
     );
     assert!(
@@ -108,7 +108,7 @@ fn rejects_a_batch_with_an_undeclared_column_and_names_it() {
         .expect_err("a column the schema does not declare must be refused, not silently dropped");
 
     assert!(
-        matches!(&error, SchemaMismatch::UndeclaredColumn { column } if column == "embedding"),
+        matches!(&error, Error::Schema(SchemaMismatch::UndeclaredColumn { column }) if column == "embedding"),
         "expected an undeclared-column error naming `embedding`, got: {error:?}",
     );
     assert!(
@@ -132,7 +132,7 @@ fn rejects_a_column_of_the_wrong_type_and_names_both_types() {
     assert!(
         matches!(
             &error,
-            SchemaMismatch::TypeMismatch { column, declared, present }
+            Error::Schema(SchemaMismatch::TypeMismatch { column, declared, present })
                 if column == "id" && *declared == DataType::Int64 && *present == DataType::Utf8
         ),
         "expected a type mismatch on `id` from Int64 to Utf8, got: {error:?}",
@@ -161,7 +161,7 @@ fn rejects_a_nullable_column_where_the_declaration_forbids_null() {
     assert!(
         matches!(
             &error,
-            SchemaMismatch::NullabilityMismatch { column, declared_nullable: false }
+            Error::Schema(SchemaMismatch::NullabilityMismatch { column, declared_nullable: false })
                 if column == "title"
         ),
         "expected a nullability mismatch on `title`, got: {error:?}",

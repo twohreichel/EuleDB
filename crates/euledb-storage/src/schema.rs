@@ -51,7 +51,7 @@ impl TableSchema {
     ///
     /// use arrow_array::{ArrayRef, Int64Array, RecordBatch, StringArray};
     /// use arrow_schema::{DataType, Field, Schema};
-    /// use euledb_storage::{SchemaMismatch, TableSchema};
+    /// use euledb_storage::{Error, SchemaMismatch, TableSchema};
     ///
     /// let schema = TableSchema::new(Schema::new(vec![
     ///     Field::new("id", DataType::Int64, false),
@@ -67,7 +67,7 @@ impl TableSchema {
     /// ])?;
     ///
     /// let error = schema.validate(&batch).unwrap_err();
-    /// assert!(matches!(error, SchemaMismatch::TypeMismatch { .. }));
+    /// assert!(matches!(error, Error::Schema(SchemaMismatch::TypeMismatch { .. })));
     /// assert_eq!(
     ///     error.to_string(),
     ///     "column `id` is declared Int64 but the batch carries Utf8",
@@ -79,7 +79,7 @@ impl TableSchema {
     ///
     /// Returns [`SchemaMismatch`] when the batch does not match the declared schema, naming the column
     /// and what was wrong with it.
-    pub fn validate(&self, batch: &RecordBatch) -> Result<(), SchemaMismatch> {
+    pub fn validate(&self, batch: &RecordBatch) -> crate::Result<()> {
         let present = batch.schema();
         // Matched by name rather than by position: a caller assembling columns from a map has no
         // control over their order, and refusing a correct batch for that would be pedantry.
@@ -87,14 +87,16 @@ impl TableSchema {
             let Some((_, found)) = present.column_with_name(declared.name()) else {
                 return Err(SchemaMismatch::MissingColumn {
                     column: declared.name().clone(),
-                });
+                }
+                .into());
             };
             if found.data_type() != declared.data_type() {
                 return Err(SchemaMismatch::TypeMismatch {
                     column: declared.name().clone(),
                     declared: declared.data_type().clone(),
                     present: found.data_type().clone(),
-                });
+                }
+                .into());
             }
             // A batch may be stricter than the declaration but never looser. Declaring a column
             // non-nullable and then storing nulls in it makes the declaration a suggestion.
@@ -102,14 +104,16 @@ impl TableSchema {
                 return Err(SchemaMismatch::NullabilityMismatch {
                     column: declared.name().clone(),
                     declared_nullable: false,
-                });
+                }
+                .into());
             }
         }
         for field in present.fields() {
             if self.declared.column_with_name(field.name()).is_none() {
                 return Err(SchemaMismatch::UndeclaredColumn {
                     column: field.name().clone(),
-                });
+                }
+                .into());
             }
         }
         Ok(())
