@@ -40,6 +40,11 @@ euledb-storage = { path = "crates/euledb-storage", version = "0.0.0" }
 # Envelope encryption (ADR-002). RustCrypto throughout: aes-gcm carries an NCC Group audit with no
 # significant findings, and argon2 is the reference implementation of the variant the RFC recommends.
 aes-gcm = "0.11"
+# Capability-token signatures (AC-28). HMAC-SHA256 rather than a signature scheme: this document
+# describes no second party, so an issuer that can also verify costs nothing, and it avoids a key pair to
+# manage. RustCrypto throughout, like the cipher above.
+hmac = "0.13"
+sha2 = "0.11"
 argon2 = "0.5"
 # 32 random bytes from the operating system, and nothing more. The full rand stack would be a
 # generator, a seeding strategy and a distribution API for one call that must not be reproducible.
