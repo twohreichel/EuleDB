@@ -59,6 +59,15 @@ supply-chain:
 
 # Prove every crate is publishable, rather than letting a release tag discover it is not.
 publish-check:
+    # The dry run serves the unpublished members to each other through a throwaway local registry, and
+    # caches both the unpacked source and its compiled artefact under name and version. The version here
+    # never changes, so cargo reuses the first of each forever and verifies a fresh facade against a stale
+    # storage layer -- reporting a method as missing that exists. Drop both, and it rebuilds from the
+    # tarball it just wrote. The compiled copy lands in the *workspace* target directory, not beside the
+    # tarball, which is why the second line reaches there. Every other dependency stays cached.
+    find "${CARGO_HOME:-$HOME/.cargo}/registry/src" -mindepth 2 -maxdepth 2 -type d \
+        -name 'euledb-*' -exec rm -rf {} +
+    rm -rf target/*/.fingerprint/euledb-* target/*/deps/*euledb*
     cargo publish --dry-run --workspace --all-features --allow-dirty
 
 # Fetch the reference corpus the benchmarks are measured against.
