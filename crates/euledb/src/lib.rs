@@ -19,6 +19,7 @@ pub use arrow_schema;
 pub use config::Config;
 pub use database::Database;
 pub use euledb_storage::{
-    Assignment, Compression, DataKeyId, Deleted, Error, Keyring, Predicate, Result, SchemaMismatch,
-    StorageError, TableSchema, Updated, ZstdLevel,
+    Assignment, Compression, DataKeyId, Deleted, Embedder, Error, Fused, FusedHit, Keyring,
+    Predicate, Result, RowId, SchemaMismatch, StemmingLanguage, StorageError, TableSchema, Updated,
+    VectorIndexKind, ZstdLevel,
 };

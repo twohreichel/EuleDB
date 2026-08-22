@@ -1,11 +1,11 @@
-//! The published surface: one handle, six operations.
+//! The published surface: one handle, and everything a caller does with a table through it.
 
 use std::path::Path;
 
 use arrow_array::RecordBatch;
 use euledb_storage::{
-    Assignment, Deleted, Keyring, LanceStore, Predicate, TableDefinition, TableSchema,
-    TableStore as _, Updated,
+    Assignment, Deleted, Embedder, Fused, Keyring, LanceStore, Predicate, RowId, StemmingLanguage,
+    TableDefinition, TableSchema, TableStore as _, Updated, VectorIndexKind,
 };
 
 use crate::Config;
@@ -20,6 +20,10 @@ use crate::Config;
 ///
 /// Many readers may hold the same database at once. At most one writer may, and a second one is
 /// refused immediately rather than left waiting.
+///
+/// The same rows answer three kinds of question — an exact filter, full text, and meaning — and
+/// [`Database::hybrid_search`] fuses the last two into one ranking. `docs/getting-started.md` walks
+/// through all of them.
 ///
 /// # Examples
 ///
@@ -121,6 +125,111 @@ impl Database {
             store: self.store.encrypted(keyring),
             config: self.config,
         }
+    }
+
+    /// Give this database the means to turn text into vectors.
+    ///
+    /// **Required for anything semantic** — inserting into a table with an auto-embedding column, and
+    /// every semantic or hybrid query. Not required for exact filters or full text, so a process that
+    /// only does those never loads half a gigabyte of weights.
+    #[must_use]
+    pub fn embedding(self, embedder: std::sync::Arc<dyn Embedder>) -> Self {
+        Self {
+            store: self.store.embedding(embedder),
+            config: self.config,
+        }
+    }
+
+    /// Build the index a semantic query needs.
+    ///
+    /// An operation rather than a declaration: the index is built over rows that already exist, so it
+    /// cannot be an attribute of a table declared before any row is.
+    ///
+    /// # Errors
+    ///
+    /// Reports the failure when the column carries no vectors, or when this handle was opened for reading.
+    pub async fn index_vectors(
+        &self,
+        table: &str,
+        column: &str,
+        kind: VectorIndexKind,
+    ) -> crate::Result<()> {
+        self.store.create_vector_index(table, column, kind).await
+    }
+
+    /// Build the index a full-text query needs, stemming for one language.
+    ///
+    /// # Errors
+    ///
+    /// Reports the failure when the column is not text, or when this handle was opened for reading.
+    pub async fn index_text(
+        &self,
+        table: &str,
+        column: &str,
+        language: StemmingLanguage,
+    ) -> crate::Result<()> {
+        self.store.create_text_index(table, column, language).await
+    }
+
+    /// The rows whose text is closest in meaning to a query.
+    ///
+    /// The query is embedded for you, under the prefix the model expects of a *query* rather than of
+    /// stored text — a distinction that costs recall when it is got wrong and that a caller should not
+    /// have to know about.
+    ///
+    /// # Errors
+    ///
+    /// Reports the failure when this database has no embedder, when the column carries no vectors, or
+    /// when the search cannot run.
+    pub async fn semantic_search(
+        &self,
+        table: &str,
+        column: &str,
+        query: &str,
+        limit: usize,
+    ) -> crate::Result<Vec<RowId>> {
+        let vector = self.store.embed_query(query)?;
+        Ok(self
+            .store
+            .nearest(table, column, &vector, limit)
+            .await?
+            .into_iter()
+            .map(|hit| hit.row)
+            .collect())
+    }
+
+    /// The rows a full-text query matches, ranked by BM25.
+    ///
+    /// # Errors
+    ///
+    /// Reports the failure when the column has no text index, or when the query cannot run.
+    pub async fn text_search(
+        &self,
+        table: &str,
+        column: &str,
+        query: &str,
+        limit: usize,
+    ) -> crate::Result<Vec<RowId>> {
+        self.store.search_text(table, column, query, limit).await
+    }
+
+    /// One ranking from both retrieval paths, with the rank each gave every hit.
+    ///
+    /// # Errors
+    ///
+    /// Reports the failure when this database has no embedder, when either index is missing, or when
+    /// either side cannot answer.
+    pub async fn hybrid_search(
+        &self,
+        table: &str,
+        column: &str,
+        query: &str,
+        limit: usize,
+    ) -> crate::Result<Fused> {
+        let vector = self.store.embed_query(query)?;
+        self.store
+            .hybrid_search(table, column, query, &vector, limit)
+            .await
     }
 
     /// Declare a table.
