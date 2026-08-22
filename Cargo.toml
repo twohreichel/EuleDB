@@ -66,7 +66,14 @@ arrow-schema = "58"
 # TryStreamExt, to collect a scan. Already in the tree through lance, so this adds nothing.
 futures-util = { version = "0.3", default-features = false }
 tempfile = "3"
+# Capturing the delete announcement in a test. A dev-dependency: a library emits events, it does not
+# decide how they are collected.
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "registry"] }
 thiserror = "2"
+# Structured diagnostics. tracing rather than log because this layer is async, because the format
+# already emits tracing spans so an application here almost certainly has a subscriber, and because a
+# delete's count and predicate belong in named fields rather than interpolated into a message.
+tracing = { version = "0.1", default-features = false, features = ["std", "attributes"] }
 # Key material must not linger in freed memory, where a core dump or a swap file would reach it.
 zeroize = { version = "1", features = ["derive"] }
 tokio = { version = "1", default-features = false }
