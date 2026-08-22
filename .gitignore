@@ -44,3 +44,7 @@ CLAUDE.md
 # The reference corpus is fetched, not tracked: 35 MB of somebody else's prose does not belong in a
 # source repository. `just corpus` fetches it and its digest is pinned in code. See corpus/README.md.
 corpus/reference.tsv
+
+# The embedding model is fetched at a pinned revision, not tracked: half a gigabyte of weights does
+# not belong in a source repository and its licence is its own. `just model` fetches it.
+model/

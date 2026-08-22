@@ -109,6 +109,16 @@ skip = [
     { crate = "rand", reason = "transitive, two majors below us" },
     { crate = "rand_core", reason = "transitive, same cause as rand" },
     { crate = "cpufeatures", reason = "two RustCrypto generations coexist: aes-gcm 0.11 and sha2 0.11 use 0.3, the on-disk format's tree still uses 0.2. Runtime CPU-feature detection only, and not ours to unify" },
+    # Added with the embedding path. The tokenizer duplicate that came with it was NOT skipped: the
+    # declaration was aligned to the version candle-core already uses, which removed it outright. These
+    # four could not be, because both sides are transitive.
+    { crate = "base64", reason = "transitive: 0.13 inside the on-disk format's tree, 0.22 under the tokenizer. Neither is reachable from a manifest here" },
+    { crate = "darling", reason = "transitive derive helper, 0.20 and 0.23 pulled by two different macro crates. Build-time only" },
+    { crate = "darling_core", reason = "transitive, same cause as darling" },
+    { crate = "darling_macro", reason = "transitive, same cause as darling" },
+    { crate = "nom", reason = "transitive parser combinator, 7 and 8 below us. Neither is ours to pick" },
+    { crate = "thiserror", reason = "1 survives in the on-disk format's tree while this project and its newer dependencies use 2. Deriving an error type, so the duplicate is a derive macro plus a small runtime" },
+    { crate = "thiserror-impl", reason = "proc-macro half of thiserror, same cause" },
 ]
 deny = []
 

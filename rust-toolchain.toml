@@ -1,7 +1,9 @@
-# The minimum supported Rust version, derived rather than chosen: the maximum `rust-version` across
-# the pinned dependencies of the specification's technology stack — lance 1.91.0, tantivy 1.86,
-# arrow 1.85, aes-gcm 1.85. CI verifies against this channel AND against stable (AC-11), so raising
-# it is a deliberate, visible act.
+# The minimum supported Rust version, derived rather than chosen: the maximum a pinned dependency of
+# the specification's technology stack actually needs. lance declares 1.91.0, tantivy 1.86, arrow 1.85,
+# aes-gcm 1.85 — and `candle-core` declares nothing while using an unstable feature on aarch64, so its
+# requirement was measured rather than read: 1.93.0 fails, 1.94.0 builds. That measurement is why this
+# is 1.94.0 and not 1.91.0. CI verifies against this channel AND against stable (AC-11), so raising it
+# is a deliberate, visible act.
 [toolchain]
-channel = "1.91.0"
+channel = "1.94.0"
 components = ["rustfmt", "clippy"]
