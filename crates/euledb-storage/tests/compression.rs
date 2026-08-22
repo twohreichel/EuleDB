@@ -12,7 +12,8 @@ use std::sync::Arc;
 use arrow_array::{ArrayRef, Int64Array, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema};
 use euledb_storage::{
-    Compression, LanceStore, TableDefinition, TableSchema, TableStore, ZstdLevel,
+    Compression, Error, InvalidZstdLevel, LanceStore, TableDefinition, TableSchema, TableStore,
+    ZstdLevel,
 };
 
 /// A document table: an identifier and repetitive multilingual prose, which is what a compressor has
@@ -129,9 +130,9 @@ fn a_level_outside_the_zstd_range_is_refused() {
     for refused in [0, 23, u8::MAX] {
         let error = ZstdLevel::new(refused)
             .expect_err("a level zstd does not define must not be constructible");
-        assert_eq!(
-            error.given, refused,
-            "the error must name the value it rejected"
+        assert!(
+            matches!(error, Error::Compression(InvalidZstdLevel { given }) if given == refused),
+            "the error must name the value it rejected: {error:?}",
         );
     }
     assert!(

@@ -33,7 +33,7 @@ impl TableDefinition {
     ///     Compression::zstd(ZstdLevel::new(19)?),
     /// );
     /// assert_eq!(archival.compression(), Compression::zstd(ZstdLevel::new(19)?));
-    /// # Ok::<(), euledb_storage::InvalidZstdLevel>(())
+    /// # Ok::<(), euledb_storage::Error>(())
     /// ```
     #[must_use]
     pub fn new(schema: TableSchema) -> Self {

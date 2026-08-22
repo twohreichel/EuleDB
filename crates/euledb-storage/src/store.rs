@@ -31,20 +31,17 @@ pub trait TableStore {
         &self,
         table: &str,
         definition: &TableDefinition,
-    ) -> impl Future<Output = Result<(), StorageError>> + Send;
+    ) -> impl Future<Output = crate::Result<()>> + Send;
 
     /// Append a batch to an existing table.
     fn append(
         &self,
         table: &str,
         batch: &RecordBatch,
-    ) -> impl Future<Output = Result<(), StorageError>> + Send;
+    ) -> impl Future<Output = crate::Result<()>> + Send;
 
     /// Read every row of a table back, in the batches it was stored in.
-    fn scan(
-        &self,
-        table: &str,
-    ) -> impl Future<Output = Result<Vec<RecordBatch>, StorageError>> + Send;
+    fn scan(&self, table: &str) -> impl Future<Output = crate::Result<Vec<RecordBatch>>> + Send;
 
     /// Set columns on every row matching a predicate, and leave every other row alone.
     fn update(
@@ -52,7 +49,7 @@ pub trait TableStore {
         table: &str,
         matching: &Predicate,
         assignments: &[Assignment],
-    ) -> impl Future<Output = Result<Updated, StorageError>> + Send;
+    ) -> impl Future<Output = crate::Result<Updated>> + Send;
 
     /// Remove every row matching a predicate.
     ///
@@ -62,7 +59,7 @@ pub trait TableStore {
         &self,
         table: &str,
         matching: &Predicate,
-    ) -> impl Future<Output = Result<Deleted, StorageError>> + Send;
+    ) -> impl Future<Output = crate::Result<Deleted>> + Send;
 }
 
 /// A store holding each table as a dataset under one directory.
@@ -113,7 +110,7 @@ impl LanceStore {
     /// [`StorageError::AlreadyOpenForWriting`] when another writer holds it, immediately rather than
     /// after a wait. [`StorageError::Backend`] when the lock cannot be established at all, which is a
     /// filesystem or permission problem rather than contention.
-    pub fn open_for_writing(root: impl AsRef<Path>) -> Result<Self, StorageError> {
+    pub fn open_for_writing(root: impl AsRef<Path>) -> crate::Result<Self> {
         let root = root.as_ref().to_path_buf();
         let lock = WriteLock::acquire(&root).map_err(|cause| match cause {
             LockError::Busy { root } => StorageError::AlreadyOpenForWriting { root },
@@ -131,14 +128,15 @@ impl LanceStore {
     }
 
     /// Refuse a writing operation on a store that was opened for reading.
-    fn require_write_role(&self, operation: &'static str, table: &str) -> Result<(), StorageError> {
+    fn require_write_role(&self, operation: &'static str, table: &str) -> crate::Result<()> {
         if self.write_lock.is_some() {
             return Ok(());
         }
         Err(StorageError::ReadOnly {
             operation,
             table: table.to_owned(),
-        })
+        }
+        .into())
     }
 
     /// Read and write this store's tables encrypted under the keyring's data key.
@@ -169,7 +167,7 @@ impl LanceStore {
     /// The builder rather than `Dataset::open`, because open uses the process-wide registry and would
     /// not know the encrypted scheme. One place, so that reading, updating and deleting cannot drift
     /// into opening the same table differently.
-    async fn open(&self, table: &str) -> Result<lance::Dataset, StorageError> {
+    async fn open(&self, table: &str) -> crate::Result<lance::Dataset> {
         let mut builder =
             lance::dataset::builder::DatasetBuilder::from_uri(self.uri(table).as_str());
         if let Some(session) = self.session.clone() {
@@ -178,7 +176,7 @@ impl LanceStore {
         builder
             .load()
             .await
-            .map_err(|cause| StorageError::backend("open the table", table, cause))
+            .map_err(|cause| StorageError::backend("open the table", table, cause).into())
     }
 
     /// Where a table lives. Tables are separate datasets, so one can be dropped without rewriting
@@ -194,11 +192,7 @@ impl LanceStore {
 }
 
 impl TableStore for LanceStore {
-    async fn create_table(
-        &self,
-        table: &str,
-        definition: &TableDefinition,
-    ) -> Result<(), StorageError> {
+    async fn create_table(&self, table: &str, definition: &TableDefinition) -> crate::Result<()> {
         self.require_write_role("create the table", table)?;
         // The compression travels as field metadata on the schema, so it is persisted with the table
         // rather than having to be supplied again on every write.
@@ -217,10 +211,10 @@ impl TableStore for LanceStore {
         lance::Dataset::write(empty, self.uri(table).as_str(), Some(params))
             .await
             .map(|_| ())
-            .map_err(|cause| StorageError::backend("create the table", table, cause))
+            .map_err(|cause| StorageError::backend("create the table", table, cause).into())
     }
 
-    async fn append(&self, table: &str, batch: &RecordBatch) -> Result<(), StorageError> {
+    async fn append(&self, table: &str, batch: &RecordBatch) -> crate::Result<()> {
         self.require_write_role("append to", table)?;
         let schema = batch.schema();
         let batches = RecordBatchIterator::new(std::iter::once(Ok(batch.clone())), schema);
@@ -232,7 +226,7 @@ impl TableStore for LanceStore {
         lance::Dataset::write(batches, self.uri(table).as_str(), Some(params))
             .await
             .map(|_| ())
-            .map_err(|cause| StorageError::backend("append to the table", table, cause))
+            .map_err(|cause| StorageError::backend("append to the table", table, cause).into())
     }
 
     async fn update(
@@ -240,12 +234,13 @@ impl TableStore for LanceStore {
         table: &str,
         matching: &Predicate,
         assignments: &[Assignment],
-    ) -> Result<Updated, StorageError> {
+    ) -> crate::Result<Updated> {
         self.require_write_role("update", table)?;
         if assignments.is_empty() {
             return Err(StorageError::NothingToSet {
                 table: table.to_owned(),
-            });
+            }
+            .into());
         }
         let dataset = Arc::new(self.open(table).await?);
         let mut builder = lance::dataset::write::update::UpdateBuilder::new(dataset)
@@ -268,7 +263,7 @@ impl TableStore for LanceStore {
         })
     }
 
-    async fn delete(&self, table: &str, matching: &Predicate) -> Result<Deleted, StorageError> {
+    async fn delete(&self, table: &str, matching: &Predicate) -> crate::Result<Deleted> {
         self.require_write_role("delete from", table)?;
         let mut dataset = self.open(table).await?;
 
@@ -302,7 +297,7 @@ impl TableStore for LanceStore {
         })
     }
 
-    async fn scan(&self, table: &str) -> Result<Vec<RecordBatch>, StorageError> {
+    async fn scan(&self, table: &str) -> crate::Result<Vec<RecordBatch>> {
         let dataset = self.open(table).await?;
         dataset
             .scan()
@@ -316,8 +311,9 @@ impl TableStore for LanceStore {
             .map(|batch| {
                 // Hand back the caller's schema, not the one carrying this crate's encoding keys.
                 let schema = Arc::new(Compression::stripped_from(batch.schema_ref()));
-                RecordBatch::try_new(schema, batch.columns().to_vec())
-                    .map_err(|cause| StorageError::backend("read the table", table, cause))
+                RecordBatch::try_new(schema, batch.columns().to_vec()).map_err(|cause| {
+                    crate::Error::from(StorageError::backend("read the table", table, cause))
+                })
             })
             .collect()
     }

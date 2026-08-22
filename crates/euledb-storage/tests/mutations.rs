@@ -11,7 +11,7 @@ use std::sync::Arc;
 use arrow_array::{ArrayRef, Int64Array, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema};
 use euledb_storage::{
-    Assignment, Keyring, LanceStore, Predicate, StorageError, TableDefinition, TableSchema,
+    Assignment, Error, Keyring, LanceStore, Predicate, StorageError, TableDefinition, TableSchema,
     TableStore,
 };
 
@@ -238,7 +238,7 @@ async fn an_update_with_nothing_to_set_is_refused() {
     // is_err() passed with the guard removed — and the caller would get a message about a query plan
     // instead of one about their own call.
     assert!(
-        matches!(error, StorageError::NothingToSet { ref table } if table == "documents"),
+        matches!(error, Error::Storage(StorageError::NothingToSet { ref table }) if table == "documents"),
         "the refusal did not name the mistake, so the caller learns nothing: {error:?}",
     );
 }

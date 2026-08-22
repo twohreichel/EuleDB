@@ -51,11 +51,11 @@ impl ZstdLevel {
     /// # Errors
     ///
     /// Returns [`InvalidZstdLevel`] for `0` or for anything above 22.
-    pub const fn new(level: u8) -> Result<Self, InvalidZstdLevel> {
-        if level >= Self::FASTEST.0 && level <= Self::SMALLEST.0 {
+    pub fn new(level: u8) -> crate::Result<Self> {
+        if (Self::FASTEST.0..=Self::SMALLEST.0).contains(&level) {
             Ok(Self(level))
         } else {
-            Err(InvalidZstdLevel { given: level })
+            Err(InvalidZstdLevel { given: level }.into())
         }
     }
 
