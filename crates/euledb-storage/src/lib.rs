@@ -24,6 +24,7 @@ mod error;
 mod measurement;
 mod mutation;
 mod schema;
+mod search;
 mod store;
 mod writer_lock;
 
@@ -34,4 +35,5 @@ pub use error::{Error, Result};
 pub use measurement::{Measured, Order, RowId, RowIdSet, RowsExamined};
 pub use mutation::{Assignment, Deleted, Predicate, Updated};
 pub use schema::{SchemaMismatch, TableSchema};
+pub use search::CandidateSource;
 pub use store::{LanceStore, StorageError, TableStore};
