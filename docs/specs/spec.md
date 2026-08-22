@@ -418,6 +418,23 @@ Two consequences that are easy to get wrong:
 
 ### Decisions taken
 
+**Full text is the format's inverted index, not a second engine** (decided 2026-08-22, at SUB-32). The
+stack table named `tantivy` and gave stemming across seventeen Latin languages as the reason. Reading the
+format's own crates showed that reason is already met: its inverted index stems through `rust-stemmers`
+— the same Snowball library — in **eighteen languages**, German, French, Spanish, Italian, Dutch and
+Portuguese among them, and its tokenizer pipeline is built on the same filters. Adding Tantivy would put a
+second full-text engine in the tree with its own index files, its own tokenisation and its own consistency
+problem against row identity, to obtain what is already there.
+
+**Polish is absent from that list, and would be absent from Tantivy's too** — Snowball has no Polish
+stemmer. A Polish column is indexed without stemming whichever engine is chosen. Worth knowing rather than
+discovering, since the reference corpus contains Polish.
+
+**One language per index, by the nature of the method.** A Snowball stemmer strips German endings from
+German words and would produce nonsense applied to French, so a table holding several languages wants an
+index per language rather than one index pretending to be all of them.
+
+
 **Quantisation is the larger artefact at small scale, not the smaller one** (measured 2026-08-22, at
 SUB-31). AC-35 asks for IVF-PQ where memory is constrained. Over two dozen vectors the quantised index
 occupied **27 847 bytes against the graph's 16 479** — the codebook is a fixed cost (sixteen sub-vectors,

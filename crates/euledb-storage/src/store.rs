@@ -766,6 +766,102 @@ impl LanceStore {
         Ok(found)
     }
 
+    /// Build a full-text index over a text column.
+    ///
+    /// BM25 ranking, with stemming and stop-word removal for the language given. One language per index:
+    /// a Snowball stemmer is language-specific, so a table holding several languages wants an index per
+    /// language rather than one index pretending to be all of them.
+    ///
+    /// # Errors
+    ///
+    /// Reports the failure when the column is not there or is not text, and refuses when this store was
+    /// opened for reading.
+    pub async fn create_text_index(
+        &self,
+        table: &str,
+        column: &str,
+        language: crate::StemmingLanguage,
+    ) -> crate::Result<()> {
+        self.require_scope(Scope::Schema, table)?;
+        self.require_write_role("index the text of", table)?;
+
+        let (name, stem) = language.as_parts();
+        let mut dataset = self.open(table).await?;
+        let params = lance_index::scalar::InvertedIndexParams::default()
+            .language(name)
+            .map_err(|cause| StorageError::backend("index the text of", table, cause))?
+            .stem(stem)
+            .remove_stop_words(stem)
+            .lower_case(true);
+
+        Box::pin(dataset.create_index(
+            &[column],
+            lance_index::IndexType::Inverted,
+            None,
+            &params,
+            true,
+        ))
+        .await
+        .map_err(|cause| StorageError::backend("index the text of", table, cause))?;
+        self.record(&format!("index the text of `{table}`.`{column}`"), name, 0)
+    }
+
+    /// The rows a full-text query matches, ranked by BM25.
+    ///
+    /// # Errors
+    ///
+    /// Reports the failure when the column has no text index, or when the query cannot be run.
+    pub async fn search_text(
+        &self,
+        table: &str,
+        column: &str,
+        query: &str,
+        limit: usize,
+    ) -> crate::Result<Vec<RowId>> {
+        self.require_scope(Scope::Read, table)?;
+        let dataset = self.open(table).await?;
+        let mut scanner = dataset.scan();
+        scanner
+            .full_text_search(lance_index::scalar::FullTextSearchQuery::new(
+                query.to_owned(),
+            ))
+            .map_err(|cause| StorageError::backend("search the text of", table, cause))?;
+        scanner.with_row_id();
+        scanner
+            .limit(Some(i64::try_from(limit).unwrap_or(i64::MAX)), None)
+            .map_err(|cause| StorageError::backend("limit the search of", table, cause))?;
+        scanner
+            .project::<&str>(&[])
+            .map_err(|cause| StorageError::backend("project no columns of", table, cause))?;
+
+        let batches = scanner
+            .try_into_stream()
+            .await
+            .map_err(|cause| StorageError::backend("start a text search of", table, cause))?
+            .try_collect::<Vec<RecordBatch>>()
+            .await
+            .map_err(|cause| StorageError::backend("read the text results of", table, cause))?;
+
+        let mut hits = Vec::new();
+        for batch in &batches {
+            let rows = batch
+                .column_by_name(lance_core::ROW_ID)
+                .and_then(|c| c.as_any().downcast_ref::<arrow_array::UInt64Array>())
+                .ok_or_else(|| {
+                    StorageError::backend("read the text results of", table, "no row-id column")
+                })?;
+            for index in 0..batch.num_rows() {
+                hits.push(RowId::new(rows.value(index)));
+            }
+        }
+        self.record(
+            &format!("search the text of `{table}`.`{column}`"),
+            query,
+            u64::try_from(hits.len()).unwrap_or(u64::MAX),
+        )?;
+        Ok(hits)
+    }
+
     /// Which vector index a column carries, if any.
     ///
     /// **Why this is public** — "selectable per table" is only a real property if a caller can find out
