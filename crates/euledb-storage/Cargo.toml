@@ -33,6 +33,9 @@ tracing.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+# Forging a record in the audit test: an attacker who can write the log can also compute its hashes,
+# so the test has to be able to as well.
+sha2.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tracing-subscriber.workspace = true
