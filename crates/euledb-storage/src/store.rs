@@ -11,7 +11,7 @@ use arrow_array::{RecordBatch, RecordBatchIterator};
 use futures_util::TryStreamExt;
 
 use crate::crypto::{BlockSize, EncryptingProvider};
-use crate::measurement::{Measured, RowId, widest_scan};
+use crate::measurement::{Measured, Order, RowId, widest_scan};
 use crate::writer_lock::{LockError, WriteLock};
 use crate::{Assignment, Compression, Deleted, Keyring, Predicate, TableDefinition, Updated};
 use lance::index::DatasetIndexExt as _;
@@ -167,6 +167,65 @@ impl LanceStore {
         Ok(())
     }
 
+    /// Rows matching a predicate, in the order of one column.
+    ///
+    /// The predicate is served by an index where one covers the column it constrains, so a range over an
+    /// indexed column reads the matching rows rather than the table.
+    ///
+    /// **The order does not come from the index.** No scalar index in this format returns rows in key
+    /// order — both the ordered and the bitmap kind hand back storage order — so the ordering is applied
+    /// to the rows the predicate selected. That is a sort over the matches, not over the table, which is
+    /// why narrowing first is what keeps it cheap.
+    ///
+    /// # Errors
+    ///
+    /// Reports the failure when the table or the ordering column does not exist, or when the predicate
+    /// cannot be applied to the table.
+    pub async fn scan_ordered(
+        &self,
+        table: &str,
+        matching: &Predicate,
+        by: &str,
+        order: Order,
+    ) -> crate::Result<Vec<RecordBatch>> {
+        let dataset = self.open(table).await?;
+        let mut scanner = dataset.scan();
+        Self::select_ordered(&mut scanner, table, matching, by, order)?;
+        self.collect(scanner, table).await
+    }
+
+    /// Rows matching a predicate in the order of one column, and how many rows answering it examined.
+    ///
+    /// **A diagnostic, not a hot path** — as [`LanceStore::row_ids_measured`], it runs the plan a second
+    /// time. It exists so the claim that an ordered range still goes through the index is measured
+    /// rather than argued: a full scan followed by a sort returns the same rows in the same order.
+    ///
+    /// # Errors
+    ///
+    /// As [`LanceStore::scan_ordered`], plus the failure when the plan cannot be analysed.
+    pub async fn scan_ordered_measured(
+        &self,
+        table: &str,
+        matching: &Predicate,
+        by: &str,
+        order: Order,
+    ) -> crate::Result<Measured<Vec<RecordBatch>>> {
+        let value = self.scan_ordered(table, matching, by, order).await?;
+
+        let dataset = self.open(table).await?;
+        let mut scanner = dataset.scan();
+        Self::select_ordered(&mut scanner, table, matching, by, order)?;
+        let plan = scanner
+            .analyze_plan()
+            .await
+            .map_err(|cause| StorageError::backend("analyse the plan for", table, cause))?;
+
+        Ok(Measured {
+            value,
+            rows_examined: widest_scan(&plan),
+        })
+    }
+
     /// The row ids of every row matching a predicate.
     ///
     /// A row id is the format's identity for a row, so this is what an index points at and what a set
@@ -241,6 +300,63 @@ impl LanceStore {
             value,
             rows_examined: widest_scan(&plan),
         })
+    }
+
+    /// Narrow a scan to the rows matching a predicate, ordered by one column.
+    ///
+    /// One place, for the same reason as the row-id form: a plan analysed with different options than
+    /// the one that ran would measure a different query.
+    fn select_ordered(
+        scanner: &mut lance::dataset::scanner::Scanner,
+        table: &str,
+        matching: &Predicate,
+        by: &str,
+        order: Order,
+    ) -> crate::Result<()> {
+        scanner
+            .filter(matching.as_str())
+            .map_err(|cause| StorageError::backend("apply the predicate to", table, cause))?;
+        let ordering = match order {
+            // Nulls last in both directions: a null is the absence of a key, so it belongs after every
+            // row that has one whichever way the keys run.
+            Order::Ascending => {
+                lance::dataset::scanner::ColumnOrdering::asc_nulls_last(by.to_owned())
+            }
+            Order::Descending => {
+                lance::dataset::scanner::ColumnOrdering::desc_nulls_last(by.to_owned())
+            }
+        };
+        scanner
+            .order_by(Some(vec![ordering]))
+            .map_err(|cause| StorageError::backend("order the rows of", table, cause))?;
+        Ok(())
+    }
+
+    /// Read a configured scan into batches carrying the caller's schema.
+    ///
+    /// One place, because every read has to strip the encoding metadata this crate writes onto a
+    /// table's schema — hand back the caller's schema, not the one carrying this crate's encoding
+    /// keys — and a read that forgot would hand a caller keys it never declared.
+    async fn collect(
+        &self,
+        scanner: lance::dataset::scanner::Scanner,
+        table: &str,
+    ) -> crate::Result<Vec<RecordBatch>> {
+        scanner
+            .try_into_stream()
+            .await
+            .map_err(|cause| StorageError::backend("start a scan of the table", table, cause))?
+            .try_collect::<Vec<RecordBatch>>()
+            .await
+            .map_err(|cause| StorageError::backend("read the table", table, cause))?
+            .into_iter()
+            .map(|batch| {
+                let schema = Arc::new(Compression::stripped_from(batch.schema_ref()));
+                RecordBatch::try_new(schema, batch.columns().to_vec()).map_err(|cause| {
+                    crate::Error::from(StorageError::backend("read the table", table, cause))
+                })
+            })
+            .collect()
     }
 
     /// Narrow a scan to the row ids matching a predicate, and to nothing else.
@@ -451,23 +567,8 @@ impl TableStore for LanceStore {
 
     async fn scan(&self, table: &str) -> crate::Result<Vec<RecordBatch>> {
         let dataset = self.open(table).await?;
-        dataset
-            .scan()
-            .try_into_stream()
-            .await
-            .map_err(|cause| StorageError::backend("start a scan of the table", table, cause))?
-            .try_collect::<Vec<RecordBatch>>()
-            .await
-            .map_err(|cause| StorageError::backend("read the table", table, cause))?
-            .into_iter()
-            .map(|batch| {
-                // Hand back the caller's schema, not the one carrying this crate's encoding keys.
-                let schema = Arc::new(Compression::stripped_from(batch.schema_ref()));
-                RecordBatch::try_new(schema, batch.columns().to_vec()).map_err(|cause| {
-                    crate::Error::from(StorageError::backend("read the table", table, cause))
-                })
-            })
-            .collect()
+        let scanner = dataset.scan();
+        self.collect(scanner, table).await
     }
 }
 

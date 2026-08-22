@@ -46,6 +46,17 @@ impl RowsExamined {
     }
 }
 
+/// Which way an ordering runs.
+///
+/// An enum rather than a boolean, so a call site reads as what it means instead of as `true`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Order {
+    /// Smallest key first.
+    Ascending,
+    /// Largest key first.
+    Descending,
+}
+
 /// A result, and what producing it cost in rows examined.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Measured<T> {
