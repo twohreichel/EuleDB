@@ -766,6 +766,58 @@ impl LanceStore {
         Ok(found)
     }
 
+    /// One ranking from both retrieval paths, fused by Reciprocal Rank Fusion.
+    ///
+    /// The semantic side searches the column's vectors, the lexical side its text index, and the two
+    /// rankings are combined so that a row both sides placed moderately well beats one a single side
+    /// placed first. Every hit carries the rank it held on each side, so a caller can see where it came
+    /// from — a fused score without that is an unexplainable number.
+    ///
+    /// The `k` in the formula is chosen from the number of rows in the table, not from the length of the
+    /// candidate lists: two sources may each return ten candidates out of a million rows, and it is the
+    /// million that decides whether adjacent ranks need separating. The value used is reported.
+    ///
+    /// # Errors
+    ///
+    /// Reports the failure when either side cannot answer — a missing text index, a missing vector index,
+    /// a query of the wrong width.
+    pub async fn hybrid_search(
+        &self,
+        table: &str,
+        column: &str,
+        text: &str,
+        vector: &[f32],
+        limit: usize,
+    ) -> crate::Result<crate::Fused> {
+        self.require_scope(Scope::Read, table)?;
+
+        // Both sides are asked for more than the caller wants, so fusion has something to reorder. Asking
+        // each for exactly `limit` would make the fused ranking a merge of two truncated lists.
+        let breadth = limit.saturating_mul(2).max(limit);
+        let semantic: Vec<RowId> = self
+            .nearest(table, column, vector, breadth)
+            .await?
+            .into_iter()
+            .map(|hit| hit.row)
+            .collect();
+        let lexical = self.search_text(table, column, text, breadth).await?;
+
+        let rows = self
+            .open(table)
+            .await?
+            .count_rows(None)
+            .await
+            .map_err(|cause| StorageError::backend("count the rows of", table, cause))?;
+
+        let fused = crate::fusion::fuse(&semantic, &lexical, rows, limit);
+        self.record(
+            &format!("hybrid search of `{table}`.`{column}` for {text:?}"),
+            &format!("rrf k={}", fused.effective_k),
+            u64::try_from(fused.hits.len()).unwrap_or(u64::MAX),
+        )?;
+        Ok(fused)
+    }
+
     /// Build a full-text index over a text column.
     ///
     /// BM25 ranking, with stemming and stop-word removal for the language given. One language per index:
