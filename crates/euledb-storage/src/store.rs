@@ -11,7 +11,7 @@ use arrow_array::{RecordBatch, RecordBatchIterator};
 use futures_util::TryStreamExt;
 
 use crate::crypto::{BlockSize, EncryptingProvider};
-use crate::measurement::{Measured, Order, RowId, widest_scan};
+use crate::measurement::{Measured, Order, RowId, RowIdSet, intersect_all, union_all, widest_scan};
 use crate::writer_lock::{LockError, WriteLock};
 use crate::{Assignment, Compression, Deleted, Keyring, Predicate, TableDefinition, Updated};
 use lance::index::DatasetIndexExt as _;
@@ -133,6 +133,66 @@ impl LanceStore {
             write_lock: Some(Arc::new(lock)),
             session: None,
         })
+    }
+
+    /// The rows matching **every** one of several predicates.
+    ///
+    /// Each predicate is answered on its own and the answers are intersected as compressed bitmaps, so a
+    /// conjunction costs one narrow read per part rather than one pass evaluating all of them. Where an
+    /// index covers a part, that part is served by it.
+    ///
+    /// # Errors
+    ///
+    /// Refuses an empty list: an empty conjunction is every row by the identity, and returning a whole
+    /// table for a filter a caller believed they had supplied is the kind of surprise that should be an
+    /// error. Otherwise reports the failure as [`LanceStore::row_ids`] does.
+    pub async fn row_ids_all(
+        &self,
+        table: &str,
+        matching: &[Predicate],
+    ) -> crate::Result<RowIdSet> {
+        let (first, rest) = self.each_set(table, matching, "intersect").await?;
+        Ok(intersect_all(first, rest))
+    }
+
+    /// The rows matching **any** one of several predicates.
+    ///
+    /// # Errors
+    ///
+    /// Refuses an empty list, for the mirror of the reason [`LanceStore::row_ids_all`] does: an empty
+    /// disjunction is no rows at all, and a filter that silently matches nothing hides the mistake
+    /// instead of reporting it. Otherwise reports the failure as [`LanceStore::row_ids`] does.
+    pub async fn row_ids_any(
+        &self,
+        table: &str,
+        matching: &[Predicate],
+    ) -> crate::Result<RowIdSet> {
+        let (first, rest) = self.each_set(table, matching, "unite").await?;
+        Ok(union_all(first, rest))
+    }
+
+    /// One set per predicate, split into the first and the rest.
+    ///
+    /// Split rather than a list, so the combining functions have no empty case to answer for.
+    async fn each_set(
+        &self,
+        table: &str,
+        matching: &[Predicate],
+        operation: &'static str,
+    ) -> crate::Result<(RowIdSet, Vec<RowIdSet>)> {
+        let Some((head, tail)) = matching.split_first() else {
+            return Err(StorageError::NothingToCombine {
+                table: table.to_owned(),
+                operation,
+            }
+            .into());
+        };
+        let first: RowIdSet = self.row_ids(table, head).await?.into_iter().collect();
+        let mut rest = Vec::with_capacity(tail.len());
+        for predicate in tail {
+            rest.push(self.row_ids(table, predicate).await?.into_iter().collect());
+        }
+        Ok((first, rest))
     }
 
     /// Build an index over a column, so an exact lookup on it stops walking the table.
@@ -592,6 +652,19 @@ pub enum StorageError {
         operation: &'static str,
         /// The table it was aimed at.
         table: String,
+    },
+
+    /// Predicates were to be combined, but none were given.
+    ///
+    /// Its own variant rather than the identity of the operation: an empty conjunction is every row and
+    /// an empty disjunction is none, so either default silently answers a question the caller did not
+    /// ask.
+    #[error("no predicates were given to {operation} for `{table}`")]
+    NothingToCombine {
+        /// The table the combination was aimed at.
+        table: String,
+        /// What was to be done with the predicates, phrased to read after "to".
+        operation: &'static str,
     },
 
     /// An update was asked for with no columns to set.
