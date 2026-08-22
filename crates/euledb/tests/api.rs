@@ -210,3 +210,31 @@ async fn an_encrypted_database_is_not_readable_with_other_keys() {
         "keys that did not write this database must not read it",
     );
 }
+
+/// Auditing is on by default and switchable off, and off means no file at all.
+#[tokio::test]
+async fn the_audit_log_follows_the_configuration() {
+    async fn log_exists(config: Config) -> bool {
+        let root = tempfile::tempdir().expect("a temporary directory is available");
+        {
+            let db = Database::open_for_writing_with(root.path(), config)
+                .expect("the write role is free");
+            db.create_table("documents", &documents())
+                .await
+                .expect("the table is declared");
+            db.insert("documents", &rows())
+                .await
+                .expect("the rows land");
+        }
+        root.path().join(".euledb-audit.log").exists()
+    }
+
+    assert!(
+        log_exists(Config::default()).await,
+        "auditing is on by default, so the default configuration must leave a log",
+    );
+    assert!(
+        !log_exists(Config::default().with_auditing(false)).await,
+        "off must mean no file — a database on read-only media has to stay usable",
+    );
+}
