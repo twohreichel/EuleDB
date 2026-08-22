@@ -95,6 +95,32 @@ fn the_query_and_passage_prefixes_reach_the_model() {
     );
 }
 
+/// The port a database reaches through must keep the two prefixes apart as well.
+///
+/// The inherent methods are tested above, but the storage layer never calls those — it calls the trait,
+/// and a trait method that quietly embedded a query as a passage would cost recall in every semantic
+/// query while every test above stayed green.
+#[test]
+fn the_port_embeds_a_query_as_a_query_and_not_as_a_passage() {
+    let embedder = model();
+    let text = "Vorratsdatenspeicherung";
+
+    let through_the_port = euledb_storage::Embedder::embed_query(&embedder, text).expect("embeds");
+    let as_query = embedder.embed_query(text).expect("embeds");
+    let as_passage = embedder.embed_passage(text).expect("embeds");
+
+    assert_eq!(
+        through_the_port,
+        as_query.as_slice(),
+        "the port must hand over the query embedding unchanged",
+    );
+    assert_ne!(
+        through_the_port,
+        as_passage[0].as_slice(),
+        "and it must not be the passage embedding of the same text",
+    );
+}
+
 /// Chunking is asserted without a forward pass, on purpose.
 ///
 /// Embedding a 20 000-character document means one pass per chunk through a twelve-layer transformer,
@@ -103,21 +129,20 @@ fn the_query_and_passage_prefixes_reach_the_model() {
 #[test]
 fn text_beyond_the_token_limit_becomes_several_chunks_that_each_fit() {
     let embedder = model();
-    let long = euledb_corpus::smoke()
-        .into_iter()
-        .max_by_key(|document| document.text.len())
-        .expect("the corpus is not empty");
+    // One real article, tracked beside this test. Not read from the corpus crate: a published crate
+    // cannot depend on an unpublished one, and this test needs exactly one long real document.
+    let long = include_str!("fixtures/long-document.txt");
     assert!(
-        long.text.len() > 20_000,
+        long.len() > 20_000,
         "the fixture must actually be long, or this test proves nothing: {} chars",
-        long.text.len(),
+        long.len(),
     );
 
-    let chunks = embedder.chunks(&long.text).expect("a long passage chunks");
+    let chunks = embedder.chunks(long).expect("a long passage chunks");
     assert!(
         chunks.len() > 1,
         "a document of {} characters cannot be one chunk of {TOKEN_LIMIT} tokens",
-        long.text.len(),
+        long.len(),
     );
 
     for chunk in &chunks {
@@ -132,9 +157,9 @@ fn text_beyond_the_token_limit_becomes_several_chunks_that_each_fit() {
     // failure this chunking exists to avoid.
     let rejoined: usize = chunks.iter().map(String::len).sum();
     assert!(
-        rejoined >= long.text.trim().len() - chunks.len(),
+        rejoined >= long.trim().len() - chunks.len(),
         "the chunks must account for the whole document: {rejoined} of {} characters",
-        long.text.len(),
+        long.len(),
     );
 }
 

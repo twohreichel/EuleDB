@@ -94,6 +94,16 @@ impl std::fmt::Debug for Embedder {
 impl Embedder {
     /// Load the graph and its tokenizer from a directory `just model` filled.
     ///
+    /// ```no_run
+    /// // `no_run`: the weights are half a gigabyte and are deliberately not part of this crate, so
+    /// // the example is compiled here and executed by the suite in `tests/embedding.rs` instead.
+    /// let embedder = euledb_embed::Embedder::load("model")?;
+    /// let stored = embedder.embed_passage("Der Wasserstand steigt bei Flut.")?;
+    /// let asked = embedder.embed_query("Wann steigt der Wasserstand?")?;
+    /// assert_eq!(stored[0].as_slice().len(), euledb_embed::DIMENSIONS);
+    /// # Ok::<(), euledb_embed::EmbedError>(())
+    /// ```
+    ///
     /// # Errors
     ///
     /// [`EmbedError::ModelMissing`] when a file is absent, naming the command that fetches it, and
@@ -395,6 +405,12 @@ impl euledb_storage::Embedder for Embedder {
                     .map(|chunk| chunk.as_slice().to_vec())
                     .collect()
             })
+            .map_err(|failure| failure.to_string())
+    }
+
+    fn embed_query(&self, text: &str) -> Result<Vec<f32>, String> {
+        Self::embed_query(self, text)
+            .map(|vector| vector.as_slice().to_vec())
             .map_err(|failure| failure.to_string())
     }
 }

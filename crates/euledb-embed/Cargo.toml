@@ -1,12 +1,21 @@
 [package]
 name = "euledb-embed"
-description = "Embeddings for EuleDB: the multilingual-e5-small ONNX graph, run locally. Not published while the model fetch is a documented step rather than a dependency."
-publish = false
+description = "Embeddings for EuleDB: the multilingual-e5-small ONNX graph, run locally in pure Rust. The weights are fetched once, not vendored."
+# Published: the getting-started guide has a newcomer construct an embedder, and a guide that cannot be
+# followed from crates.io is not a guide. The model itself is still fetched rather than vendored.
+publish = true
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+readme = "README.md"
+# Its own, not the workspace's: this crate is the embedding path, not the database.
+keywords = ["embeddings", "onnx", "multilingual", "local-first", "semantic-search"]
+categories = ["text-processing", "science"]
+# The tests need the model on disk, so they could not pass from a published .crate anyway -- and their
+# fixture is a slice of a CC BY-SA corpus, which has no business inside an Apache-2.0-or-MIT package.
+exclude = ["tests/"]
 
 [dependencies]
 euledb-storage.workspace = true
@@ -15,7 +24,6 @@ tokenizers.workspace = true
 tract-onnx.workspace = true
 
 [dev-dependencies]
-euledb-corpus.workspace = true
 tempfile.workspace = true
 
 [lints]
