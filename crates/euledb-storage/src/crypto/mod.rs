@@ -20,12 +20,15 @@
 //! `docs/adr/ADR-002-where-encryption-sits.md` § Amendment for the evidence and the cost of the
 //! correction. `provider` carries the scheme, `store` the sealing layer, `frame` the block framing.
 
+mod capability;
 mod frame;
 mod keyring;
 mod provider;
 mod secret;
 mod store;
 
+pub(crate) use capability::Gate;
+pub use capability::{Capability, Scope};
 pub(crate) use frame::{BlockFrame, BlockSize};
 pub use keyring::{DataKeyId, Keyring, KeyringError};
 pub(crate) use provider::EncryptingProvider;

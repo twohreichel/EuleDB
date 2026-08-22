@@ -10,7 +10,7 @@ use std::sync::Arc;
 use arrow_array::{RecordBatch, RecordBatchIterator};
 use futures_util::TryStreamExt;
 
-use crate::crypto::{BlockSize, EncryptingProvider};
+use crate::crypto::{BlockSize, Capability, EncryptingProvider, Gate, Scope};
 use crate::measurement::{Measured, Order, RowId, RowIdSet, intersect_all, union_all, widest_scan};
 use crate::search::CandidateSource;
 use crate::writer_lock::{LockError, WriteLock};
@@ -96,6 +96,9 @@ pub struct LanceStore {
     /// Present when this store is encrypted. Carries the registry that resolves the encrypted URI
     /// scheme, which is how every byte gets routed through the cipher.
     session: Option<Arc<lance::session::Session>>,
+    /// Present when this handle is gated. Absent means this is the authority's own handle and every
+    /// operation is permitted, subject to the write role.
+    gate: Option<Gate>,
 }
 
 impl LanceStore {
@@ -106,6 +109,7 @@ impl LanceStore {
             root: root.as_ref().to_path_buf(),
             write_lock: None,
             session: None,
+            gate: None,
         }
     }
 
@@ -133,6 +137,7 @@ impl LanceStore {
             root,
             write_lock: Some(Arc::new(lock)),
             session: None,
+            gate: None,
         })
     }
 
@@ -234,6 +239,7 @@ impl LanceStore {
     /// Reports the failure when the table or the column does not exist, and refuses when this store was
     /// opened for reading.
     pub async fn create_index(&self, table: &str, column: &str) -> crate::Result<()> {
+        self.require_scope(Scope::Schema, table)?;
         self.require_write_role("index a column of", table)?;
         let mut dataset = self.open(table).await?;
         // No name of ours: the format names an index after the column, and a naming convention we own is
@@ -272,6 +278,7 @@ impl LanceStore {
         by: &str,
         order: Order,
     ) -> crate::Result<Vec<RecordBatch>> {
+        self.require_scope(Scope::Read, table)?;
         let dataset = self.open(table).await?;
         let mut scanner = dataset.scan();
         Self::select_ordered(&mut scanner, table, matching, by, order)?;
@@ -320,6 +327,7 @@ impl LanceStore {
     /// Reports the failure when the table does not exist, or when the predicate cannot be applied to
     /// it — an unknown column, or text that is not an expression.
     pub async fn row_ids(&self, table: &str, matching: &Predicate) -> crate::Result<Vec<RowId>> {
+        self.require_scope(Scope::Read, table)?;
         let dataset = self.open(table).await?;
         let mut scanner = dataset.scan();
         Self::select_row_ids(&mut scanner, table, matching)?;
@@ -500,6 +508,42 @@ impl LanceStore {
         self
     }
 
+    /// Restrict this handle to what the given capabilities permit.
+    ///
+    /// **What** — turns the authority's own handle into one that may do only what a signed token says.
+    /// **When** — before handing a handle to a subsystem or a plugin that should not have the whole
+    /// database. **Why the authority is not gated by default** — the holder of the keyring *is* the
+    /// authority, and a database with no restricted handle in it has nobody to restrict.
+    ///
+    /// Inside a gated handle the default is **nothing**: every operation needs a token naming its table
+    /// and its scope, so read-only is what an empty grant list means. Scopes do not imply one another —
+    /// a write token does not permit reading.
+    ///
+    /// A token is honoured only if its tag verifies under the keyring that signed it, so a holder cannot
+    /// widen its own rights by writing a capability by hand.
+    #[must_use]
+    pub fn gated(mut self, keyring: &Keyring, granted: Vec<Capability>) -> Self {
+        self.gate = Some(Gate::new(keyring, granted));
+        self
+    }
+
+    /// Refuse an operation this handle has no token for.
+    ///
+    /// Checked **before the table is touched**, which is what keeps the refusal from revealing whether
+    /// the target exists: a caller without permission gets the same answer for a table that is there and
+    /// one that is not.
+    fn require_scope(&self, scope: Scope, table: &str) -> crate::Result<()> {
+        match &self.gate {
+            None => Ok(()),
+            Some(gate) if gate.permits(table, scope) => Ok(()),
+            Some(_) => Err(StorageError::NotPermitted {
+                scope,
+                table: table.to_owned(),
+            }
+            .into()),
+        }
+    }
+
     /// Open a table.
     ///
     /// The builder rather than `Dataset::open`, because open uses the process-wide registry and would
@@ -536,6 +580,7 @@ impl LanceStore {
 
 impl TableStore for LanceStore {
     async fn create_table(&self, table: &str, definition: &TableDefinition) -> crate::Result<()> {
+        self.require_scope(Scope::Schema, table)?;
         self.require_write_role("create the table", table)?;
         // The compression travels as field metadata on the schema, so it is persisted with the table
         // rather than having to be supplied again on every write.
@@ -558,6 +603,7 @@ impl TableStore for LanceStore {
     }
 
     async fn append(&self, table: &str, batch: &RecordBatch) -> crate::Result<()> {
+        self.require_scope(Scope::Write, table)?;
         self.require_write_role("append to", table)?;
         let schema = batch.schema();
         let batches = RecordBatchIterator::new(std::iter::once(Ok(batch.clone())), schema);
@@ -578,6 +624,7 @@ impl TableStore for LanceStore {
         matching: &Predicate,
         assignments: &[Assignment],
     ) -> crate::Result<Updated> {
+        self.require_scope(Scope::Write, table)?;
         self.require_write_role("update", table)?;
         if assignments.is_empty() {
             return Err(StorageError::NothingToSet {
@@ -607,6 +654,7 @@ impl TableStore for LanceStore {
     }
 
     async fn delete(&self, table: &str, matching: &Predicate) -> crate::Result<Deleted> {
+        self.require_scope(Scope::Write, table)?;
         self.require_write_role("delete from", table)?;
         let mut dataset = self.open(table).await?;
 
@@ -641,6 +689,7 @@ impl TableStore for LanceStore {
     }
 
     async fn drop_table(&self, table: &str) -> crate::Result<()> {
+        self.require_scope(Scope::Schema, table)?;
         self.require_write_role("drop the table", table)?;
         // Removing the directory, rather than asking the format to: its own removal for a local
         // dataset is this same synchronous call, and going through the builder would mean opening a
@@ -650,6 +699,7 @@ impl TableStore for LanceStore {
     }
 
     async fn scan(&self, table: &str) -> crate::Result<Vec<RecordBatch>> {
+        self.require_scope(Scope::Read, table)?;
         let dataset = self.open(table).await?;
         let scanner = dataset.scan();
         self.collect(scanner, table).await
@@ -675,6 +725,18 @@ pub enum StorageError {
         /// What was attempted, phrased to read after "cannot".
         operation: &'static str,
         /// The table it was aimed at.
+        table: String,
+    },
+
+    /// The handle has no token for what was asked.
+    ///
+    /// Deliberately identical whether or not the table exists: the check runs before the table is
+    /// touched, so a caller without permission cannot use the error to discover what a database holds.
+    #[error("this handle has no {scope} capability for `{table}`")]
+    NotPermitted {
+        /// The scope that was missing.
+        scope: Scope,
+        /// The table that was asked for — the name the caller supplied, which tells them nothing new.
         table: String,
     },
 

@@ -263,6 +263,19 @@ impl Keyring {
         self.reseal().map_err(Into::into)
     }
 
+    /// The key capability tags are signed with.
+    ///
+    /// Derived from the key-encryption key under its own context, so a token key and a data key can
+    /// never be the same bytes — a token forgeable by anyone who can read a block header would be no
+    /// gate at all.
+    pub(crate) fn token_key(&self) -> [u8; KEY_LEN] {
+        use hmac::{KeyInit as _, Mac as _};
+        let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(self.kek.expose())
+            .unwrap_or_else(|_| unreachable!("HMAC accepts a key of any length"));
+        mac.update(b"euledb/token-key/v1");
+        mac.finalize().into_bytes().into()
+    }
+
     /// The id new writes are sealed under.
     #[must_use]
     pub fn current_data_key_id(&self) -> DataKeyId {
@@ -434,4 +447,53 @@ pub enum KeyringError {
     /// Wrapping or unwrapping the key set failed for a reason other than a wrong passphrase.
     #[error("the key set could not be wrapped")]
     Wrapping,
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::expect_used,
+        reason = "in a test an unwrap IS the assertion, and its panic message is the failure narrative"
+    )]
+
+    use super::Keyring;
+
+    /// Key separation, asserted from inside because it is not observable from outside.
+    ///
+    /// Signing tokens with the key-encryption key itself, or with a data key, would pass every behavioural
+    /// test in the suite — the gate would still work. What it would cost is the property that reading a
+    /// block header, or learning one data key, tells an attacker nothing about forging a token. That
+    /// property has no observable behaviour, so it is asserted directly.
+    #[test]
+    fn the_token_key_is_not_any_key_that_touches_data() {
+        let keyring = Keyring::create("korrektes-pferd-batterie-heftklammer").expect("keyring");
+        let token_key = keyring.token_key();
+
+        assert_ne!(
+            &token_key,
+            keyring.kek.expose(),
+            "signing tokens with the key that wraps the key set would make one secret do two jobs",
+        );
+        for id in keyring.data_key_ids().collect::<Vec<_>>() {
+            let data_key = keyring.data_key(id).expect("an id from the set resolves");
+            assert_ne!(
+                &token_key, data_key,
+                "signing tokens with a data key would make a token forgeable by anyone holding it",
+            );
+        }
+    }
+
+    /// The same passphrase under a different salt is a different authority.
+    #[test]
+    fn two_keyrings_do_not_share_a_token_key() {
+        let phrase = "korrektes-pferd-batterie-heftklammer";
+        let one = Keyring::create(phrase).expect("keyring");
+        let other = Keyring::create(phrase).expect("keyring");
+
+        assert_ne!(
+            one.token_key(),
+            other.token_key(),
+            "a token signed by one authority must not verify under another",
+        );
+    }
 }
