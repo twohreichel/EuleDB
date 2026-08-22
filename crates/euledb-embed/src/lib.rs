@@ -310,7 +310,15 @@ impl Embedder {
 fn mean_pool(values: &[f32], mask: &[i64]) -> Vec<f32> {
     let mut summed = vec![0.0_f32; DIMENSIONS];
     let mut counted = 0.0_f32;
-    for (row, keep) in values.chunks_exact(DIMENSIONS).zip(mask) {
+    // `as_chunks` rather than `chunks_exact`: clippy on a newer stable than the pinned toolchain insists,
+    // and it is right — the length is a constant, so the array type carries it and the remainder is
+    // explicit rather than discarded silently.
+    let (rows, remainder) = values.as_chunks::<DIMENSIONS>();
+    debug_assert!(
+        remainder.is_empty(),
+        "the graph's output is a whole number of {DIMENSIONS}-wide rows",
+    );
+    for (row, keep) in rows.iter().zip(mask) {
         if *keep == 0 {
             continue;
         }
