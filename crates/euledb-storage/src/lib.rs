@@ -17,6 +17,7 @@
 //! section of each function names the *specific* failure it can produce, which is reached by matching
 //! the [`Error`] variant that carries it.
 
+mod audit;
 mod compression;
 mod crypto;
 mod definition;
@@ -28,6 +29,7 @@ mod search;
 mod store;
 mod writer_lock;
 
+pub use audit::{AuditError, AuditLog, AuditRecord};
 pub use compression::{Compression, InvalidZstdLevel, ZstdLevel};
 pub use crypto::{Capability, DataKeyId, Keyring, KeyringError, Scope};
 pub use definition::TableDefinition;

@@ -96,6 +96,8 @@ pub struct LanceStore {
     /// Present when this store is encrypted. Carries the registry that resolves the encrypted URI
     /// scheme, which is how every byte gets routed through the cipher.
     session: Option<Arc<lance::session::Session>>,
+    /// Present when this handle records what it is asked to do.
+    audit: Option<crate::audit::AuditLog>,
     /// Present when this handle is gated. Absent means this is the authority's own handle and every
     /// operation is permitted, subject to the write role.
     gate: Option<Gate>,
@@ -110,6 +112,7 @@ impl LanceStore {
             write_lock: None,
             session: None,
             gate: None,
+            audit: None,
         }
     }
 
@@ -138,6 +141,7 @@ impl LanceStore {
             write_lock: Some(Arc::new(lock)),
             session: None,
             gate: None,
+            audit: None,
         })
     }
 
@@ -508,6 +512,38 @@ impl LanceStore {
         self
     }
 
+    /// Record every operation this handle performs in the database's audit log.
+    ///
+    /// **Why a tunable rather than always on** — a recorded read is a *write*, so an audited handle
+    /// cannot open a database on read-only media or one the caller may only read. Off means no file is
+    /// created at all.
+    ///
+    /// **Why a read is recorded** — the criterion says every operation, and who read what is usually the
+    /// question an audit log is opened to answer.
+    ///
+    /// The log takes a short exclusive lock on **its own file**, never the database's write lock, so
+    /// many readers still hold the database at once and serialise only for the length of one append.
+    #[must_use]
+    pub fn audited(mut self) -> Self {
+        self.audit = Some(crate::audit::AuditLog::open(&self.root));
+        self
+    }
+
+    /// Record one operation, if this handle records anything.
+    ///
+    /// A failing log fails the operation. The alternative — carrying on with a gap in the record — is
+    /// worse than refusing: a log that is silently incomplete still looks trustworthy.
+    ///
+    /// # Errors
+    ///
+    /// Whatever the log could not do.
+    fn record(&self, query: &str, plan: &str, rows: u64) -> crate::Result<()> {
+        match &self.audit {
+            None => Ok(()),
+            Some(log) => log.append(query, plan, rows).map_err(Into::into),
+        }
+    }
+
     /// Restrict this handle to what the given capabilities permit.
     ///
     /// **What** — turns the authority's own handle into one that may do only what a signed token says.
@@ -598,8 +634,8 @@ impl TableStore for LanceStore {
         };
         lance::Dataset::write(empty, self.uri(table).as_str(), Some(params))
             .await
-            .map(|_| ())
-            .map_err(|cause| StorageError::backend("create the table", table, cause).into())
+            .map_err(|cause| StorageError::backend("create the table", table, cause))?;
+        self.record(&format!("create table `{table}`"), "", 0)
     }
 
     async fn append(&self, table: &str, batch: &RecordBatch) -> crate::Result<()> {
@@ -612,10 +648,11 @@ impl TableStore for LanceStore {
             session: self.session.clone(),
             ..Default::default()
         };
+        let appended = u64::try_from(batch.num_rows()).unwrap_or(u64::MAX);
         lance::Dataset::write(batches, self.uri(table).as_str(), Some(params))
             .await
-            .map(|_| ())
-            .map_err(|cause| StorageError::backend("append to the table", table, cause).into())
+            .map_err(|cause| StorageError::backend("append to the table", table, cause))?;
+        self.record(&format!("insert into `{table}`"), "", appended)
     }
 
     async fn update(
@@ -648,6 +685,15 @@ impl TableStore for LanceStore {
             .execute()
             .await
             .map_err(|cause| StorageError::backend("update", table, cause))?;
+        self.record(
+            &format!("update `{table}` where {}", matching.as_str()),
+            &assignments
+                .iter()
+                .map(|assignment| assignment.column())
+                .collect::<Vec<&str>>()
+                .join(", "),
+            result.rows_updated,
+        )?;
         Ok(Updated {
             rows: result.rows_updated,
         })
@@ -683,6 +729,11 @@ impl TableStore for LanceStore {
             .delete(matching.as_str())
             .await
             .map_err(|cause| StorageError::backend("delete from", table, cause))?;
+        self.record(
+            &format!("delete from `{table}` where {}", matching.as_str()),
+            "",
+            result.num_deleted_rows,
+        )?;
         Ok(Deleted {
             rows: result.num_deleted_rows,
         })
@@ -691,6 +742,7 @@ impl TableStore for LanceStore {
     async fn drop_table(&self, table: &str) -> crate::Result<()> {
         self.require_scope(Scope::Schema, table)?;
         self.require_write_role("drop the table", table)?;
+        self.record(&format!("drop table `{table}`"), "", 0)?;
         // Removing the directory, rather than asking the format to: its own removal for a local
         // dataset is this same synchronous call, and going through the builder would mean opening a
         // table only to delete it.
@@ -702,7 +754,13 @@ impl TableStore for LanceStore {
         self.require_scope(Scope::Read, table)?;
         let dataset = self.open(table).await?;
         let scanner = dataset.scan();
-        self.collect(scanner, table).await
+        let batches = self.collect(scanner, table).await?;
+        let returned = batches
+            .iter()
+            .map(|batch| u64::try_from(batch.num_rows()).unwrap_or(u64::MAX))
+            .sum();
+        self.record(&format!("scan `{table}`"), "", returned)?;
+        Ok(batches)
     }
 }
 
