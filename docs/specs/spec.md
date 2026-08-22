@@ -382,7 +382,7 @@ candidates named, decision deferred to the phase that needs it.
 | L1 | Vector index (IVF-PQ) | Lance-native | set | AC-35 |
 | L1 | Full text | `tantivy` | set | BM25 as in Lucene, stemming for 17 Latin languages, <10 ms startup |
 | L1 | Embedding model | `intfloat/multilingual-e5-small` | set | 384 dim, 100 languages, 512 tokens, 12 layers |
-| L1 | Inference runtime | `candle-onnx` | set | decided at SUB-28 on supply-chain grounds and confirmed by running the graph. See § Decisions taken |
+| L1 | Inference runtime | `tract-onnx` | set | decided at SUB-28 after both alternatives were disproven by measurement. See § Decisions taken |
 | L2 | Fusion | own RRF, k = 60 | set | no crate needed, AC-37 |
 | L3 | IR serialisation | `serde` | set | AC-40 |
 | L3 | Model runtime | llama.cpp (GGUF) everywhere; platform accelerators optional | set | AC-47 |
@@ -418,26 +418,36 @@ Two consequences that are easy to get wrong:
 
 ### Decisions taken
 
-**The inference runtime is `candle-onnx`** (decided 2026-08-22, at SUB-28). The choice was framed as op
-coverage against build complexity. What actually decided it is supply chain: **`ort`'s default features
-download a prebuilt C++ ONNX Runtime at build time over TLS**, and that artefact sits outside every gate
-this project has — `cargo-deny` inspects Rust crates, and CI pins third-party actions to commit SHAs
-precisely so that no unverified mutable artefact enters a build. Using `ort` without that feature instead
-requires a native ONNX Runtime installed on every developer machine and all four CI platforms, which is a
-much heavier operational burden than the one build tool already required. `ort` 2.0 is also still a release
-candidate, and the embedding path is not the place for one.
+**The inference runtime is `tract-onnx`** (decided 2026-08-22, at SUB-28, after two candidates were
+disproven). The open question framed this as op coverage against build complexity. Neither turned out to
+decide it.
 
-The op-coverage worry was settled by measurement rather than argument: `candle-onnx` loads this exact graph
-and returns `last_hidden_state` with shape `[1, n, 384]`. It needs `protoc`, which the on-disk format
-already requires, so the build-time cost is one this project pays anyway.
+**`ort` was rejected on supply chain.** Its default features download a prebuilt C++ ONNX Runtime at build
+time over TLS, and that artefact sits outside every gate this project has — `cargo-deny` inspects Rust
+crates, and CI pins third-party actions to commit SHAs precisely so no unverified mutable artefact enters a
+build. Without that feature it instead needs a native runtime on every developer machine and all four CI
+platforms. `ort` 2.0 is also still a release candidate.
 
-**Two costs, both recorded.** The dependency tree grows by about 195 crates against `ort`'s 51 — seven new
-duplicate-version entries were added to `deny.toml` with reasons, and one duplicate (`tokenizers`) was
-*removed* by aligning the declaration to what `candle-core` already uses rather than skipped. And the
-**minimum supported Rust version rises from 1.91.0 to 1.94.0**: `candle-core` declares no `rust-version`
-while using an unstable feature on aarch64, so its requirement was measured — 1.93.0 fails, 1.94.0 builds.
-The MSRV was always derived from what dependencies need rather than chosen, so this is the same rule
-applied to a dependency that does not declare its own.
+**`candle-onnx` was chosen next, and the platform matrix disproved it.** It ran the graph correctly on
+macOS, and it does not build on **linux-aarch64** at all: its `gemm` dependency emits aarch64 assembly
+requiring the `fullfp16` CPU feature, which is not in that target's default baseline. `candle-core`
+declares `gemm` with default features, and Cargo features are additive, so the f16 path cannot be turned
+off from a downstream manifest. Enabling `+fp16` for that target would make the binary require ARMv8.2-FP16
+at runtime — against the grain of criteria that are explicitly hardware-independent. It also declares no
+`rust-version` while needing 1.94.0, measured: 1.93.0 fails.
+
+**`tract-onnx` has neither problem**: pure Rust, no build tool at all, no CPU-feature assembly, and it
+declares `rust-version = 1.91`, which is the MSRV this workspace already had. It runs the graph and returns
+the expected `[1, n, 384]`.
+
+**The cost, recorded.** `tract` compiles a graph for a fixed input shape — the attention layers reshape in
+a way it cannot resolve symbolically — so the sequence length must be decided at compile time. Measured:
+padding everything to the full 512-token window costs **108 ms per call**, which spends the whole
+per-query latency budget of AC-3 on one embedding; compiling per exact length costs about 130 ms each and
+would produce one plan per distinct token count. The pipeline therefore pads to one of six buckets, which
+bounds the waste to under a factor of two and the number of plans to six: about 4 ms for a short query,
+about 108 ms for a full chunk. One MPL-2.0 exception was added to `deny.toml` (`dyn-eq`, transitive under
+`tract-core`) beside the existing one, with the same reasoning.
 
 **Mean pooling, not the leading token** (noted at SUB-28). E5 is trained with mean pooling, and pooling the
 first token instead produces vectors that are stable, cheap and not the model's. No shape, normalisation,
@@ -620,8 +630,8 @@ belongs. Those numbers assume the chosen crates hold up and the UX scope does no
 
 ### Open questions
 
-- ~~**`ort` vs `candle` as the ONNX runtime.**~~ **Closed 2026-08-22** — `candle-onnx`, on supply-chain
-  grounds and confirmed by running the graph. See § Decisions taken.
+- ~~**`ort` vs `candle` as the ONNX runtime.**~~ **Closed 2026-08-22** — neither: `tract-onnx`. `ort` was
+  rejected on supply chain and `candle` was disproven by the platform matrix. See § Decisions taken.
 - ~~**Which reference corpus grounds AC-2, AC-3, AC-4?**~~ **Closed 2026-08-22** — a fixed window of the
   dated `20231101` Wikipedia snapshot in four languages, documented with its licence and digest in
   `corpus/README.md`.

@@ -207,3 +207,34 @@ fn a_query_is_closer_to_its_answer_than_to_an_unrelated_passage() {
         to_answer - to_unrelated,
     );
 }
+
+/// Two unrelated short texts stay apart, which guards against a catastrophic pooling bug.
+///
+/// **What this does not do, measured rather than assumed:** it does not defend the padding mask. Pooling
+/// the padded positions in was measured on this exact pair at cosine 0.8366 against 0.8165 with the mask
+/// — real, and far too small for any honest threshold to separate. Tightening the bound to 0.83 would be
+/// a number reverse-engineered from the mutation, which is the tautology this project bans.
+///
+/// The mask stays because pooling padding is simply wrong, not because a test here catches it. Testing it
+/// properly needs one text embedded at two bucket sizes, and that means an API that exists only for the
+/// test. Recorded as a gap instead.
+#[test]
+fn two_unrelated_short_texts_do_not_collapse_together() {
+    let embedder = model();
+
+    // Two short, unrelated texts. Both land in the smallest bucket, so both are mostly padding.
+    let one = embedder.embed_query("Gezeiten").expect("embeds");
+    let other = embedder.embed_query("Datenschutz").expect("embeds");
+
+    let similarity: f32 = one
+        .as_slice()
+        .iter()
+        .zip(other.as_slice())
+        .map(|(a, b)| a * b)
+        .sum();
+    assert!(
+        similarity < 0.9,
+        "two unrelated short texts must not be near-identical, but cosine was {similarity} — which is \
+         what pooling the padding in produces",
+    );
+}

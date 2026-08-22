@@ -8,35 +8,48 @@
 //! recall number is about this code rather than about the model. Running the exported graph is what makes
 //! the computation the reference one.
 //!
-//! **Why `candle-onnx` and not `ort`.** `ort`'s default features download a prebuilt C++ runtime at build
-//! time over TLS, which sits outside every gate this project has: `cargo-deny` sees Rust crates, and CI
-//! pins third-party actions to commit SHAs precisely to avoid unverified mutable artefacts. `candle-onnx`
-//! is pure Rust and needs only `protoc`, which the on-disk format already requires. The cost is recorded:
-//! a larger dependency tree, and a raised minimum toolchain.
+//! **Why `tract`.** Three runtimes were weighed and both alternatives failed on something this project
+//! cannot give up. `ort` downloads a prebuilt C++ runtime at build time over TLS, outside every gate this
+//! project has. `candle-onnx` is pure Rust, and its `gemm` dependency emits aarch64 assembly requiring
+//! the `fullfp16` CPU feature — so it does not build on linux-aarch64 with default target features, one
+//! of the four platforms this project claims to support. `tract` has neither problem and needs no build
+//! tool at all.
 //!
 //! The model itself is not tracked. `just model` fetches it at a pinned revision.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
-use candle_core::{DType, Device, Tensor};
+use tract_onnx::prelude::*;
 
 /// The model's hidden size, and therefore the length of every vector it produces.
 pub const DIMENSIONS: usize = 384;
 
 /// The model's context window, in tokens.
-///
-/// Text longer than this is chunked. The limit belongs to the model, not to a choice made here.
 pub const TOKEN_LIMIT: usize = 512;
+
+/// The lengths the graph is compiled for.
+///
+/// **Why buckets rather than one length or every length.** `tract` compiles a graph for a fixed shape —
+/// the attention layers reshape in a way it cannot resolve symbolically. Padding everything to the full
+/// window was measured at **108 ms per call**, which spends the entire per-query latency budget on one
+/// embedding. Compiling per exact length instead costs about 130 ms each and would compile one plan per
+/// distinct token count. Buckets bound the waste to under a factor of two and the number of plans to six:
+/// a short query runs in about 4 ms, a full chunk in about 108 ms, and nothing in between is padded more
+/// than twice its size.
+const BUCKETS: [usize; 6] = [16, 32, 64, 128, 256, TOKEN_LIMIT];
 
 /// The prefix E5 expects on stored text.
 const PASSAGE_PREFIX: &str = "passage: ";
 
 /// The prefix E5 expects on a query.
 ///
-/// Not decoration: E5 is trained with these, and omitting them costs measurable recall. Two texts that
-/// differ only in prefix embed differently on purpose.
+/// Not decoration: E5 is trained with these, and omitting them costs measurable recall.
 const QUERY_PREFIX: &str = "query: ";
+
+/// The token the model pads with, from its own configuration.
+const PAD_TOKEN: i64 = 1;
 
 /// One vector, L2-normalised.
 ///
@@ -53,21 +66,28 @@ impl Embedding {
     }
 }
 
+/// A graph compiled for one bucket length.
+type Plan = tract_onnx::prelude::TypedSimplePlan;
+
 /// The embedding model, loaded once and used many times.
 ///
 /// **When** — construct one per process and share it: loading half a gigabyte of weights per call would
 /// dominate every measurement. **Where** — entirely local, which is the project's premise.
 pub struct Embedder {
-    model: candle_onnx::onnx::ModelProto,
+    graph: PathBuf,
     tokenizer: tokenizers::Tokenizer,
-    device: Device,
+    /// One compiled plan per bucket, built on first use rather than all at once — a process that only
+    /// ever embeds queries should not pay for the plan a full chunk needs.
+    plans: Mutex<BTreeMap<usize, std::sync::Arc<Plan>>>,
 }
 
 impl std::fmt::Debug for Embedder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // The weights are half a gigabyte and the tokenizer holds a 250 000-entry vocabulary. Printing
-        // either would be useless to a reader and ruinous to a log.
-        f.debug_struct("Embedder").finish_non_exhaustive()
+        // The tokenizer holds a 250 000-entry vocabulary. Printing it would be useless to a reader and
+        // ruinous to a log.
+        f.debug_struct("Embedder")
+            .field("graph", &self.graph)
+            .finish_non_exhaustive()
     }
 }
 
@@ -88,11 +108,6 @@ impl Embedder {
             }
         }
 
-        let model =
-            candle_onnx::read_file(&graph).map_err(|cause| EmbedError::ModelUnreadable {
-                path: graph.clone(),
-                cause: cause.to_string(),
-            })?;
         let tokenizer = tokenizers::Tokenizer::from_file(&vocabulary).map_err(|cause| {
             EmbedError::ModelUnreadable {
                 path: vocabulary.clone(),
@@ -101,9 +116,9 @@ impl Embedder {
         })?;
 
         Ok(Self {
-            model,
+            graph,
             tokenizer,
-            device: Device::Cpu,
+            plans: Mutex::new(BTreeMap::new()),
         })
     }
 
@@ -115,10 +130,9 @@ impl Embedder {
     /// # Errors
     ///
     /// [`EmbedError::Tokenizer`] when the text cannot be tokenised, [`EmbedError::Inference`] when the
-    /// graph cannot be evaluated.
+    /// graph cannot be compiled or evaluated.
     pub fn embed_passage(&self, text: &str) -> Result<Vec<Embedding>, EmbedError> {
-        let chunks = self.chunks(text)?;
-        chunks
+        self.chunks(text)?
             .iter()
             .map(|chunk| self.run(&format!("{PASSAGE_PREFIX}{chunk}")))
             .collect()
@@ -147,8 +161,7 @@ impl Embedder {
     /// [`EmbedError::Tokenizer`] when the text cannot be tokenised.
     pub fn chunks(&self, text: &str) -> Result<Vec<String>, EmbedError> {
         // The prefix costs tokens too, and the window is the model's hard limit rather than a target.
-        let prefix_cost = self.token_count(PASSAGE_PREFIX)?;
-        let budget = TOKEN_LIMIT.saturating_sub(prefix_cost + 2);
+        let budget = TOKEN_LIMIT.saturating_sub(self.token_count(PASSAGE_PREFIX)? + 2);
 
         let encoded = self.encode(text)?;
         if encoded.get_ids().len() <= budget {
@@ -158,17 +171,15 @@ impl Embedder {
         // Walk the token offsets so a chunk boundary lands between tokens rather than inside a character.
         let mut chunks = Vec::new();
         let offsets = encoded.get_offsets();
-        let mut start_char = 0;
+        let mut start = 0;
         let mut taken = 0;
         for (index, (_, end)) in offsets.iter().enumerate() {
             taken += 1;
-            let last = index + 1 == offsets.len();
-            if taken >= budget || last {
-                let piece = text.get(start_char..*end).unwrap_or_default();
-                if !piece.trim().is_empty() {
+            if taken >= budget || index + 1 == offsets.len() {
+                if let Some(piece) = text.get(start..*end).filter(|s| !s.trim().is_empty()) {
                     chunks.push(piece.to_owned());
                 }
-                start_char = *end;
+                start = *end;
                 taken = 0;
             }
         }
@@ -196,10 +207,37 @@ impl Embedder {
             })
     }
 
+    /// The compiled plan for a bucket, building it on first use.
+    fn plan(&self, length: usize) -> Result<std::sync::Arc<Plan>, EmbedError> {
+        let mut plans = self.plans.lock().map_err(|_| EmbedError::Inference {
+            cause: "the plan cache was poisoned by an earlier panic".to_owned(),
+        })?;
+        if let Some(plan) = plans.get(&length) {
+            return Ok(std::sync::Arc::clone(plan));
+        }
+
+        let fact = i64::fact([1, length]);
+        // `into_runnable` already hands back a shared plan, so nothing is wrapped a second time.
+        let build = || -> TractResult<std::sync::Arc<Plan>> {
+            tract_onnx::onnx()
+                .model_for_path(&self.graph)?
+                .with_input_fact(0, fact.clone().into())?
+                .with_input_fact(1, fact.clone().into())?
+                .with_input_fact(2, fact.into())?
+                .into_optimized()?
+                .into_runnable()
+        };
+        let plan = build().map_err(|cause| EmbedError::Inference {
+            cause: cause.to_string(),
+        })?;
+        plans.insert(length, std::sync::Arc::clone(&plan));
+        Ok(plan)
+    }
+
     /// One forward pass, mean-pooled over the attention mask and L2-normalised.
     ///
-    /// Mean pooling is what E5 is trained for: taking the first token instead would produce vectors that
-    /// are stable, cheap and wrong.
+    /// Mean pooling is what E5 is trained for: taking the leading token instead would produce vectors
+    /// that are stable, cheap and wrong.
     fn run(&self, text: &str) -> Result<Embedding, EmbedError> {
         let encoded = self
             .tokenizer
@@ -208,60 +246,74 @@ impl Embedder {
                 cause: cause.to_string(),
             })?;
 
-        let ids: Vec<i64> = encoded.get_ids().iter().map(|&id| i64::from(id)).collect();
-        let mask: Vec<i64> = encoded
-            .get_attention_mask()
+        let real = encoded.get_ids().len();
+        let bucket = BUCKETS
             .iter()
-            .map(|&flag| i64::from(flag))
-            .collect();
-        let length = ids.len();
+            .copied()
+            .find(|candidate| *candidate >= real)
+            .unwrap_or(TOKEN_LIMIT);
 
-        let inference = |cause: candle_core::Error| EmbedError::Inference {
+        // Pad to the bucket and mask the padding. Everything after `real` carries no information, and
+        // pooling it in would pull every short text towards the same vector.
+        let mut ids = vec![PAD_TOKEN; bucket];
+        let mut mask = vec![0_i64; bucket];
+        for (slot, id) in ids.iter_mut().zip(encoded.get_ids()) {
+            *slot = i64::from(*id);
+        }
+        for slot in mask.iter_mut().take(real.min(bucket)) {
+            *slot = 1;
+        }
+
+        let inference = |cause: TractError| EmbedError::Inference {
             cause: cause.to_string(),
         };
-        let mut inputs = HashMap::new();
-        inputs.insert(
-            "input_ids".to_owned(),
-            Tensor::from_vec(ids, (1, length), &self.device).map_err(inference)?,
-        );
-        inputs.insert(
-            "attention_mask".to_owned(),
-            Tensor::from_vec(mask, (1, length), &self.device).map_err(inference)?,
-        );
-        inputs.insert(
-            "token_type_ids".to_owned(),
-            Tensor::zeros((1, length), DType::I64, &self.device).map_err(inference)?,
-        );
+        let tensor = |values: Vec<i64>| -> Result<TValue, EmbedError> {
+            Ok(tract_ndarray::Array2::from_shape_vec((1, bucket), values)
+                .map_err(|cause| EmbedError::Inference {
+                    cause: cause.to_string(),
+                })?
+                .into_tensor()
+                .into())
+        };
 
-        let outputs = candle_onnx::simple_eval(&self.model, inputs).map_err(inference)?;
-        let hidden = outputs
-            .get("last_hidden_state")
-            .ok_or_else(|| EmbedError::Inference {
-                cause: "the graph produced no last_hidden_state".to_owned(),
-            })?;
-
-        let values = hidden
-            .flatten_all()
-            .and_then(|flat| flat.to_vec1::<f32>())
+        let outputs = self
+            .plan(bucket)?
+            .run(tvec!(
+                tensor(ids)?,
+                tensor(mask.clone())?,
+                tensor(vec![0_i64; bucket])?
+            ))
             .map_err(inference)?;
 
-        Ok(Embedding(normalise(mean_pool(&values))))
+        let hidden = outputs
+            .into_iter()
+            .next()
+            .ok_or_else(|| EmbedError::Inference {
+                cause: "the graph produced no output".to_owned(),
+            })?
+            .into_tensor();
+        let view = hidden.to_plain_array_view::<f32>().map_err(inference)?;
+        let values: Vec<f32> = view.iter().copied().collect();
+
+        Ok(Embedding(normalise(mean_pool(&values, &mask))))
     }
 }
 
-/// Average every token vector the model produced.
+/// Average the token vectors the attention mask keeps.
 ///
-/// **Mean pooling, not the first token.** E5 is trained with mean pooling, and taking the leading token
+/// **Mean pooling, not the leading token.** E5 is trained with mean pooling, and taking the first token
 /// instead produces vectors that are stable, cheap and *wrong* — self-consistent embeddings that are not
 /// the model's, which is exactly the failure that running the exported graph exists to avoid.
 ///
-/// No attention mask is consulted, because there is nothing to mask: one text is encoded at a time and
-/// nothing is padded. Masked pooling was written first and removed — a branch no caller can reach is a
-/// branch no test can defend. It comes back with batching, together with a test that pads.
-fn mean_pool(values: &[f32]) -> Vec<f32> {
+/// The mask is load-bearing because inputs are padded to a bucket: a padded position carries no
+/// information, and including it would pull every short text towards the same vector.
+fn mean_pool(values: &[f32], mask: &[i64]) -> Vec<f32> {
     let mut summed = vec![0.0_f32; DIMENSIONS];
     let mut counted = 0.0_f32;
-    for row in values.chunks_exact(DIMENSIONS) {
+    for (row, keep) in values.chunks_exact(DIMENSIONS).zip(mask) {
+        if *keep == 0 {
+            continue;
+        }
         for (slot, value) in summed.iter_mut().zip(row) {
             *slot += value;
         }
@@ -313,7 +365,7 @@ pub enum EmbedError {
         cause: String,
     },
 
-    /// The graph could not be evaluated.
+    /// The graph could not be compiled or evaluated.
     #[error("the model could not be evaluated: {cause}")]
     Inference {
         /// What the runtime said.

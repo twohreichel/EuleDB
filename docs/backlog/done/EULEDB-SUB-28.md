@@ -15,29 +15,50 @@ status: done
 **Embed text deterministically, 384 dimensions.** Chunk to the model's 512-token window, apply the E5
 prefix convention, L2-normalise, and produce vectors that are bit-identical across runs on one platform.
 
-## The open decision, closed by evidence rather than argument
+## The open decision took three candidates and two reversals
 
-`ort` against `candle-onnx` was framed as op coverage versus build complexity. **What decided it is supply
-chain.** `ort`'s default features download a prebuilt C++ ONNX Runtime at build time over TLS, and that
-artefact sits outside every gate this project has: `cargo-deny` inspects Rust crates, and CI pins
-third-party actions to commit SHAs precisely so no unverified mutable artefact enters a build. Using `ort`
-without that feature instead demands a native runtime installed on every developer machine and all four CI
-platforms — heavier than the one build tool already required. `ort` 2.0 is also still a release candidate.
+The question was framed as op coverage against build complexity. Neither decided it.
 
-The op-coverage worry was then settled by running it: `candle-onnx` loads this exact graph and returns
-`last_hidden_state` of shape `[1, n, 384]`. It needs `protoc`, which the on-disk format already requires.
+**`ort` was rejected on supply chain.** Its default features download a prebuilt C++ ONNX Runtime at build
+time over TLS, outside every gate this project has: `cargo-deny` inspects Rust crates, and CI pins
+third-party actions to commit SHAs precisely so no unverified mutable artefact enters a build. Without that
+feature it instead needs a native runtime on every developer machine and all four CI platforms. `ort` 2.0
+is also still a release candidate.
 
-## Two costs, both recorded
+**`candle-onnx` was chosen, implemented, and disproven by CI.** It ran the graph correctly here, and it
+does not build on **linux-aarch64** at all: its `gemm` dependency emits aarch64 assembly requiring the
+`fullfp16` CPU feature, which is not in that target's default baseline. `candle-core` declares `gemm` with
+default features and Cargo features are additive, so the f16 path cannot be disabled from downstream.
+Enabling `+fp16` for that target would make the binary require ARMv8.2-FP16 at runtime — against criteria
+that are explicitly hardware-independent. It also needed a raised MSRV: it declares none while requiring
+1.94.0, measured, 1.93.0 fails.
 
-**The dependency tree grows by about 195 crates** against `ort`'s 51. Seven duplicate-version entries were
-added to `deny.toml` with reasons — and one, `tokenizers`, was **removed rather than skipped** by aligning
-the declaration to the version `candle-core` already uses. Two copies of a 250 000-entry vocabulary in one
-binary for nothing.
+**`tract-onnx` has neither problem.** Pure Rust, no build tool, no CPU-feature assembly, and it declares
+`rust-version = 1.91` — the MSRV this workspace already had, so the raise was reverted. It runs the graph
+and returns `[1, n, 384]`.
 
-**The MSRV rises from 1.91.0 to 1.94.0.** `candle-core` declares no `rust-version` while using an unstable
-feature on aarch64, so its requirement was **measured**: 1.93.0 fails, 1.94.0 builds. The MSRV was always
-derived from what dependencies need rather than chosen, so this is the same rule applied to a dependency
-that does not declare its own — and `rust-toolchain.toml` says so.
+This is the second time the four-platform matrix has disproven a decision that looked settled, and both
+times the alternative was only visible after the failure. Worth naming as a pattern rather than a run of
+bad luck.
+
+## The cost of tract, measured
+
+`tract` compiles a graph for a **fixed** input shape — the attention layers reshape in a way it cannot
+resolve symbolically. So the sequence length is decided at compile time, and the options were measured
+rather than guessed:
+
+| Approach | Cost |
+|---|---|
+| pad everything to the 512-token window | **108 ms per call** — the whole AC-3 latency budget on one embedding |
+| compile per exact token count | ~130 ms per plan, one plan per distinct length |
+| **six buckets, pad to the next** | ~4 ms for a short query, ~108 ms for a full chunk, waste under 2x, six plans |
+
+Buckets it is. And the padding makes the attention mask load-bearing again — the earlier design had none,
+and the masked-pooling branch was removed as unreachable. It is back, with the padding that gives it
+meaning.
+
+One MPL-2.0 exception joined `deny.toml` (`dyn-eq`, transitive under `tract-core`) beside the existing one,
+with the same reasoning: transitive, file-level copyleft, no constraint on the larger work.
 
 ## What the mutation pass found, and both findings were real
 
@@ -73,7 +94,7 @@ just format && just lint && just test && just qa   # all green, 151 tests
 | the E5 prefixes are dropped | `the_query_and_passage_prefixes_reach_the_model` |
 | vectors are not L2-normalised | `every_vector_is_l2_normalised` |
 | the chunk budget ignores the prefix and the special tokens | `text_beyond_the_token_limit_becomes_several_chunks_that_each_fit` |
-| the attention mask is ignored | moot — the branch was unreachable and was removed |
+| the attention mask is ignored | **survived, and is recorded as a gap.** Measured on a representative pair: cosine 0.8366 unmasked against 0.8165 masked. Real, and far too small for an honest threshold — tightening the bound to 0.83 would be a number reverse-engineered from the mutation. The mask stays because pooling padding is wrong, not because a test catches it; testing it properly needs one text embedded at two bucket sizes, which means an API existing only for the test |
 | the leading token is used instead of the mean | `a_query_is_closer_to_its_answer_than_to_an_unrelated_passage`, added for it |
 
 ## Acceptance

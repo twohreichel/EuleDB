@@ -69,9 +69,17 @@ confidence-threshold = 0.93
 # with this crate in the tree is therefore permitted. What it does not permit is relicensing those
 # files, which nothing here does.
 #
+# dyn-eq arrives the same way: tract-onnx -> tract-hir -> tract-core -> dyn-eq, under the embedding
+# path. The reasoning above holds unchanged — transitive, file-level copyleft, source on the registry,
+# no constraint on the terms of the larger work. Two named exceptions rather than allowing MPL-2.0
+# outright, so a DIRECT dependency under it would still stop the build and need its own decision.
+#
 # Inline rather than a [[licenses.exceptions]] section: a table array here would swallow every
 # [licenses] key written after it, which is a silent misconfiguration rather than an error.
-exceptions = [{ crate = "option-ext", allow = ["MPL-2.0"] }]
+exceptions = [
+    { crate = "option-ext", allow = ["MPL-2.0"] },
+    { crate = "dyn-eq", allow = ["MPL-2.0"] },
+]
 # The list above is a policy statement, so it names licences the current tree does not happen to
 # contain. Without this, cargo-deny warns about each one and the gate output stops being pristine —
 # and output nobody reads is output that hides a real finding.
@@ -109,16 +117,17 @@ skip = [
     { crate = "rand", reason = "transitive, two majors below us" },
     { crate = "rand_core", reason = "transitive, same cause as rand" },
     { crate = "cpufeatures", reason = "two RustCrypto generations coexist: aes-gcm 0.11 and sha2 0.11 use 0.3, the on-disk format's tree still uses 0.2. Runtime CPU-feature detection only, and not ours to unify" },
-    # Added with the embedding path. The tokenizer duplicate that came with it was NOT skipped: the
-    # declaration was aligned to the version candle-core already uses, which removed it outright. These
-    # four could not be, because both sides are transitive.
+    # Added with the embedding path. All three are transitive on both sides — the inference runtime and
+    # the on-disk format's tree upgraded a shared utility at different times, which is the same cause as
+    # every entry above.
     { crate = "base64", reason = "transitive: 0.13 inside the on-disk format's tree, 0.22 under the tokenizer. Neither is reachable from a manifest here" },
-    { crate = "darling", reason = "transitive derive helper, 0.20 and 0.23 pulled by two different macro crates. Build-time only" },
+    { crate = "darling", reason = "transitive derive helper, two majors pulled by two different macro crates. Build-time only" },
     { crate = "darling_core", reason = "transitive, same cause as darling" },
     { crate = "darling_macro", reason = "transitive, same cause as darling" },
     { crate = "nom", reason = "transitive parser combinator, 7 and 8 below us. Neither is ours to pick" },
-    { crate = "thiserror", reason = "1 survives in the on-disk format's tree while this project and its newer dependencies use 2. Deriving an error type, so the duplicate is a derive macro plus a small runtime" },
-    { crate = "thiserror-impl", reason = "proc-macro half of thiserror, same cause" },
+    { crate = "itertools", reason = "transitive: the inference runtime and the on-disk format's tree are a major apart" },
+    { crate = "ndarray", reason = "transitive: the inference runtime's tensor layer and its own dependencies disagree by a minor" },
+    { crate = "rand_distr", reason = "transitive, pulled by two rand generations that already have their own skip entries" },
 ]
 deny = []
 
