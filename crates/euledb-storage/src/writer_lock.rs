@@ -20,7 +20,6 @@ const LOCK_FILE: &str = ".euledb-writer.lock";
 pub struct WriteLock {
     /// Held for its side effect. Dropping the handle releases the lock.
     _handle: File,
-    root: PathBuf,
 }
 
 impl WriteLock {
@@ -54,10 +53,7 @@ impl WriteLock {
             })?;
 
         match handle.try_lock() {
-            Ok(()) => Ok(Self {
-                _handle: handle,
-                root,
-            }),
+            Ok(()) => Ok(Self { _handle: handle }),
             // try_lock reports contention as a distinct kind, so a busy database and a broken filesystem
             // are not the same answer to the caller.
             Err(std::fs::TryLockError::WouldBlock) => Err(LockError::Busy { root }),
@@ -66,12 +62,6 @@ impl WriteLock {
                 cause: cause.to_string(),
             }),
         }
-    }
-
-    /// The database this lock is held for.
-    #[must_use]
-    pub fn root(&self) -> &Path {
-        &self.root
     }
 }
 
