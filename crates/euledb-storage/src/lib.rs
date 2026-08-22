@@ -1,4 +1,10 @@
 #![forbid(unsafe_code)]
+// Computing the layout of the format's plan-analysis future costs 130 levels of query depth, and the
+// default ceiling is 128. It only bites on Linux with a compiler newer than the pinned one — macOS and
+// Windows stable compile it either way — so the matrix over two toolchains AND four platforms is what
+// surfaced it. Raising the ceiling is the compiler's own remedy; boxing the future at the call site was
+// tried first and only moved the cost inside the dependency, where it still has to be paid.
+#![recursion_limit = "256"]
 
 //! Storage layer for EuleDB.
 //!
