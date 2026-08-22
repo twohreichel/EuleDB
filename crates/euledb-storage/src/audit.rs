@@ -2,7 +2,7 @@
 
 use std::fmt::Write as _;
 use std::fs::OpenOptions;
-use std::io::Write as _;
+use std::io::{Read as _, Seek as _, SeekFrom, Write as _};
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest as _, Sha256};
@@ -131,6 +131,17 @@ impl AuditRecord {
     }
 }
 
+/// Every record in a log's contents.
+///
+/// Separate from [`AuditLog::records`] because an append has to parse what it read through its own
+/// locked handle rather than by opening the file a second time.
+fn parse(raw: &str) -> Result<Vec<AuditRecord>, AuditError> {
+    raw.lines()
+        .filter(|line| !line.is_empty())
+        .map(AuditRecord::from_line)
+        .collect()
+}
+
 /// Escape the two characters the line format uses, and the escape itself.
 fn escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -228,7 +239,18 @@ impl AuditLog {
 
         // Read the tail under the lock, not before it: two handles that both decided their sequence
         // number before locking would write the same one.
-        let existing = self.records()?;
+        //
+        // Read through THIS handle, not by opening the file again. A file lock is advisory on Unix and
+        // **mandatory** on Windows, so a second handle reading the file this one has locked is refused
+        // there — the four-platform matrix is what surfaced that, because on Unix it simply works.
+        // Writes still go to the end regardless of where this leaves the read cursor, because the handle
+        // was opened in append mode.
+        let mut raw = String::new();
+        file.seek(SeekFrom::Start(0))
+            .map_err(|cause| AuditError::unavailable(&self.path, cause))?;
+        file.read_to_string(&mut raw)
+            .map_err(|cause| AuditError::unavailable(&self.path, cause))?;
+        let existing = parse(&raw)?;
         let (sequence, previous) = existing
             .last()
             .map_or((0, [0_u8; HASH_LEN]), |last| (last.sequence + 1, last.hash));
@@ -261,10 +283,7 @@ impl AuditLog {
             Err(cause) if cause.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
             Err(cause) => return Err(AuditError::unavailable(&self.path, cause)),
         };
-        raw.lines()
-            .filter(|line| !line.is_empty())
-            .map(AuditRecord::from_line)
-            .collect()
+        parse(&raw)
     }
 
     /// Whether the file exists at all.
