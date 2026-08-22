@@ -103,6 +103,20 @@ async fn no_public_call_panics_on_bad_input() {
         "documents",
         "an assignment whose right-hand side is nonsense",
     );
+    assert_refused(
+        store
+            .row_ids("documents", &Predicate::new("kein_feld = 1"))
+            .await,
+        "documents",
+        "asking for row ids under a predicate naming a column that is not there",
+    );
+    assert_refused(
+        store
+            .row_ids_measured("documents", &Predicate::new("))) not an expression ((("))
+            .await,
+        "documents",
+        "measuring a query that is not an expression",
+    );
 
     let wrong: ArrayRef = Arc::new(StringArray::from(vec!["nicht", "eine", "zahl"]));
     let mismatched =
