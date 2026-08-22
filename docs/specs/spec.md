@@ -418,6 +418,23 @@ Two consequences that are easy to get wrong:
 
 ### Decisions taken
 
+**The vector indices are the format's too** (decided 2026-08-22, at the P2 cut). The pinned format ships
+HNSW with an `m` parameter and cosine distance, plus `IvfPq`, `IvfHnswPq` and `IvfRq`. AC-34 and AC-35
+describe behaviour — HNSW for small and mid-size collections with documented defaults, IVF-PQ where memory
+is constrained, selectable per table without changing the query API — and the format supplies both. Taking
+them is the same decision as the scalar index in P1, for the same reason and at the same recorded cost: a
+deeper coupling to a dependency the trait boundary keeps replaceable in name. The alternative, a separate
+HNSW crate, is not chosen speculatively; if a measurement at SUB-30 shows the format's recall or its
+parameter range cannot meet AC-34, that is the moment to revisit.
+
+**Full text stays Tantivy, pending one check** (noted 2026-08-22). The format also ships an inverted index,
+so the ART argument applies in principle. It is *not* being applied here without measurement, because the
+stack table's reason for Tantivy is stemming across 17 Latin languages and this database is multilingual —
+a full-text engine that cannot stem German or Polish is not a substitute whatever else it saves. SUB-32
+checks what the format's inverted index does for stemming and records the comparison either way. This is
+the one place in the project where a second engine in the tree may be the right answer.
+
+
 **No scalar index in this format returns rows in key order** (measured 2026-08-22, at SUB-21). AC-25 is
 phrased so that a reader assumes the index supplies the order. It does not: a range over an indexed
 column was run against both the ordered and the bitmap index kind, and both returned storage order. The

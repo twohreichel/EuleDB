@@ -3,7 +3,7 @@ id: EULEDB-P3
 ticket: EULEDB
 kind: phase
 fulfils: [AC-40, AC-41, AC-42, AC-43, AC-44, AC-45, AC-46, AC-47, AC-48, AC-49, AC-50]
-depends_on: [EULEDB-P2]
+depends_on: [EULEDB-SUB-31, EULEDB-SUB-35, EULEDB-SUB-36]
 size: epic
 estimate_pm: "3-4"
 context_budget: 2000
