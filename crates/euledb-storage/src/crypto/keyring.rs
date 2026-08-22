@@ -331,15 +331,22 @@ fn decode_key_set(
         });
     }
 
+    // as_chunks rather than chunks_exact: the chunk size is a constant, so each entry arrives as a
+    // fixed-size array and every index below is checked at compile time instead of at runtime.
+    let (entries, remainder) = entries.as_chunks::<ENTRY_LEN>();
+    if !remainder.is_empty() {
+        return Err(KeyringError::MalformedKeyfile {
+            reason: "key set ends mid-entry",
+        });
+    }
+
     let mut keys = BTreeMap::new();
-    for entry in entries.chunks_exact(ENTRY_LEN) {
-        let id = DataKeyId::from(u32::from_le_bytes([entry[0], entry[1], entry[2], entry[3]]));
-        let key: [u8; KEY_LEN] =
-            entry[4..]
-                .try_into()
-                .map_err(|_| KeyringError::MalformedKeyfile {
-                    reason: "a key is not the expected length",
-                })?;
+    for entry in entries {
+        let (id, key) = entry.split_at(4);
+        let id = DataKeyId::from(u32::from_le_bytes([id[0], id[1], id[2], id[3]]));
+        let key: [u8; KEY_LEN] = key.try_into().map_err(|_| KeyringError::MalformedKeyfile {
+            reason: "a key is not the expected length",
+        })?;
         keys.insert(id, SecretKey::new(key));
     }
     if !keys.contains_key(&current) {
