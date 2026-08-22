@@ -121,6 +121,23 @@ jobs:
         with:
           # One invocation for both, so protoc and the test runner are installed together.
           tool: cargo-nextest,protoc@3.35.1
+      # The embedding model is not tracked: half a gigabyte of weights does not belong in a source
+      # repository. It is fetched at a pinned revision, and cached by that revision so a run pays the
+      # download once per platform rather than once per run. A cache keyed on anything else — a lockfile,
+      # a commit — would re-download half a gigabyte four times for every push.
+      - name: Cache the embedding model
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: model
+          key: e5-small-614241f622f53c4eeff9890bdc4f31cfecc418b3-${{ matrix.platform.name }}
+      - name: Fetch the embedding model
+        shell: bash
+        run: |
+          if [ ! -f model/model.onnx ]; then
+            python3 scripts/fetch-model.py
+          else
+            echo "model already cached"
+          fi
       - run: cargo nextest run --all-features
       # nextest does not run doctests, and an example nobody executes is a claim rather than an example.
       - run: cargo test --doc --all-features
