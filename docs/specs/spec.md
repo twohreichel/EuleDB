@@ -418,6 +418,23 @@ Two consequences that are easy to get wrong:
 
 ### Decisions taken
 
+**Quantisation is the larger artefact at small scale, not the smaller one** (measured 2026-08-22, at
+SUB-31). AC-35 asks for IVF-PQ where memory is constrained. Over two dozen vectors the quantised index
+occupied **27 847 bytes against the graph's 16 479** — the codebook is a fixed cost (sixteen sub-vectors,
+sixteen centroids each) and it dominates until the collection is far larger than the codebook itself. The
+reason the second index kind exists is therefore *not* demonstrable at the scale a unit test can afford,
+and asserting a direction there would assert something untrue. The crossover belongs to the memory
+measurement over the reference corpus.
+
+Two further facts, both found by mutation rather than by reading. **Product quantisation cannot train a
+codebook on fewer vectors than it has centroids** — four bits means sixteen, and twelve documents failed
+with exactly that message, which is why the parameters here are sixteen sub-vectors at four bits rather
+than the defaults. And **artefact size cannot show which index kind was built**: two builds of the *same*
+kind differ in bytes, so an inequality on sizes is satisfied by noise. The index's own recorded type is
+the only reliable signal, which is why `vector_index_kind` is public — "selectable per table" is a real
+property only if a caller can find out what was selected.
+
+
 **The format's HNSW is IVF-partitioned and has no separate base-layer parameter** (measured 2026-08-22, at
 SUB-30). AC-34 asks for HNSW with `M` in 12..16, `M0 = 2*M` and cosine. Two of the three are honoured:
 `m = 16` and cosine. The other cannot be — this format offers HNSW only *inside* an IVF partitioning, and

@@ -34,7 +34,7 @@ pub use audit::{AuditError, AuditLog, AuditRecord};
 pub use compression::{Compression, InvalidZstdLevel, ZstdLevel};
 pub use crypto::{Capability, DataKeyId, Keyring, KeyringError, Scope};
 pub use definition::TableDefinition;
-pub use embedding::{Embedder, RowVector, VECTOR_WIDTH};
+pub use embedding::{Embedder, RowVector, VECTOR_WIDTH, VectorIndexKind};
 pub use error::{Error, Result};
 pub use measurement::{Measured, Order, RowId, RowIdSet, RowsExamined};
 pub use mutation::{Assignment, Deleted, Predicate, Updated};
