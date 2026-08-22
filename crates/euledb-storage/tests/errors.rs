@@ -117,6 +117,11 @@ async fn no_public_call_panics_on_bad_input() {
         "documents",
         "measuring a query that is not an expression",
     );
+    assert_refused(
+        store.create_index("documents", "kein_feld").await,
+        "documents",
+        "indexing a column the table does not have",
+    );
 
     let wrong: ArrayRef = Arc::new(StringArray::from(vec!["nicht", "eine", "zahl"]));
     let mismatched =
