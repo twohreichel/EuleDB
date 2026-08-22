@@ -56,3 +56,50 @@ pub enum VectorIndexKind {
     /// Product quantisation: each vector becomes a short code. For where memory is the constraint.
     Quantised,
 }
+
+/// The language a text index stems and removes stop words for.
+///
+/// **One language per index, and that is the method rather than a limitation of this code.** A Snowball
+/// stemmer is language-specific: it strips German endings from German words, and applying it to French
+/// would produce nonsense. A table holding several languages therefore wants an index per language, not
+/// one index that tries to be all of them.
+///
+/// The list is what the stemmer library supports. **Polish is absent** — Snowball has no Polish stemmer,
+/// so a Polish column is indexed without stemming whichever engine is used, and that is worth knowing
+/// rather than discovering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum StemmingLanguage {
+    /// No stemming: tokens are indexed as they appear.
+    None,
+    /// German.
+    German,
+    /// English.
+    English,
+    /// French.
+    French,
+    /// Spanish.
+    Spanish,
+    /// Italian.
+    Italian,
+    /// Dutch.
+    Dutch,
+    /// Portuguese.
+    Portuguese,
+}
+
+impl StemmingLanguage {
+    /// The name the index configuration expects, and whether to stem at all.
+    pub(crate) const fn as_parts(self) -> (&'static str, bool) {
+        match self {
+            Self::None => ("English", false),
+            Self::German => ("German", true),
+            Self::English => ("English", true),
+            Self::French => ("French", true),
+            Self::Spanish => ("Spanish", true),
+            Self::Italian => ("Italian", true),
+            Self::Dutch => ("Dutch", true),
+            Self::Portuguese => ("Portuguese", true),
+        }
+    }
+}
