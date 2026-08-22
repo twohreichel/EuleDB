@@ -1593,6 +1593,7 @@ dependencies = [
  "block-buffer 0.12.1",
  "const-oid",
  "crypto-common 0.2.2",
+ "ctutils",
 ]
 
 [[package]]
@@ -1705,12 +1706,14 @@ dependencies = [
  "bytes",
  "futures-util",
  "getrandom 0.3.4",
+ "hmac",
  "lance",
  "lance-core",
  "lance-index",
  "lance-io",
  "object_store",
  "roaring",
+ "sha2",
  "tempfile",
  "thiserror",
  "tokio",
@@ -2090,6 +2093,15 @@ name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+
+[[package]]
+name = "hmac"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6303bc9732ae41b04cb554b844a762b4115a61bfaa81e3e83050991eeb56863f"
+dependencies = [
+ "digest 0.11.3",
+]
 
 [[package]]
 name = "http"
