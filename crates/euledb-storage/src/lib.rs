@@ -9,11 +9,13 @@
 mod compression;
 mod crypto;
 mod definition;
+mod mutation;
 mod schema;
 mod store;
 
 pub use compression::{Compression, InvalidZstdLevel, ZstdLevel};
 pub use crypto::{DataKeyId, Keyring, KeyringError};
 pub use definition::TableDefinition;
+pub use mutation::{Assignment, Deleted, Predicate, Updated};
 pub use schema::{SchemaMismatch, TableSchema};
 pub use store::{LanceStore, StorageError, TableStore};

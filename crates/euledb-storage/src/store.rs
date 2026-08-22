@@ -11,7 +11,7 @@ use arrow_array::{RecordBatch, RecordBatchIterator};
 use futures_util::TryStreamExt;
 
 use crate::crypto::{BlockSize, EncryptingProvider};
-use crate::{Compression, Keyring, TableDefinition};
+use crate::{Assignment, Compression, Deleted, Keyring, Predicate, TableDefinition, Updated};
 
 /// A cause from the layer below, kept as an opaque source.
 ///
@@ -44,6 +44,24 @@ pub trait TableStore {
         &self,
         table: &str,
     ) -> impl Future<Output = Result<Vec<RecordBatch>, StorageError>> + Send;
+
+    /// Set columns on every row matching a predicate, and leave every other row alone.
+    fn update(
+        &self,
+        table: &str,
+        matching: &Predicate,
+        assignments: &[Assignment],
+    ) -> impl Future<Output = Result<Updated, StorageError>> + Send;
+
+    /// Remove every row matching a predicate.
+    ///
+    /// The count and the predicate are logged **before** anything is removed, so a delete broader than
+    /// intended is visible in the log rather than inferred later from missing data.
+    fn delete(
+        &self,
+        table: &str,
+        matching: &Predicate,
+    ) -> impl Future<Output = Result<Deleted, StorageError>> + Send;
 }
 
 /// A store holding each table as a dataset under one directory.
@@ -89,6 +107,23 @@ impl LanceStore {
             registry,
         )));
         self
+    }
+
+    /// Open a table.
+    ///
+    /// The builder rather than `Dataset::open`, because open uses the process-wide registry and would
+    /// not know the encrypted scheme. One place, so that reading, updating and deleting cannot drift
+    /// into opening the same table differently.
+    async fn open(&self, table: &str) -> Result<lance::Dataset, StorageError> {
+        let mut builder =
+            lance::dataset::builder::DatasetBuilder::from_uri(self.uri(table).as_str());
+        if let Some(session) = self.session.clone() {
+            builder = builder.with_session(session);
+        }
+        builder
+            .load()
+            .await
+            .map_err(|cause| StorageError::backend("open the table", table, cause))
     }
 
     /// Where a table lives. Tables are separate datasets, so one can be dropped without rewriting
@@ -143,18 +178,73 @@ impl TableStore for LanceStore {
             .map_err(|cause| StorageError::backend("append to the table", table, cause))
     }
 
-    async fn scan(&self, table: &str) -> Result<Vec<RecordBatch>, StorageError> {
-        // The builder rather than Dataset::open, because open uses the process-wide registry and would
-        // not know the encrypted scheme.
-        let mut builder =
-            lance::dataset::builder::DatasetBuilder::from_uri(self.uri(table).as_str());
-        if let Some(session) = self.session.clone() {
-            builder = builder.with_session(session);
+    async fn update(
+        &self,
+        table: &str,
+        matching: &Predicate,
+        assignments: &[Assignment],
+    ) -> Result<Updated, StorageError> {
+        if assignments.is_empty() {
+            return Err(StorageError::NothingToSet {
+                table: table.to_owned(),
+            });
         }
-        let dataset = builder
-            .load()
+        let dataset = Arc::new(self.open(table).await?);
+        let mut builder = lance::dataset::write::update::UpdateBuilder::new(dataset)
+            .update_where(matching.as_str())
+            .map_err(|cause| StorageError::backend("apply the predicate to", table, cause))?;
+        for assignment in assignments {
+            builder = builder
+                .set(assignment.column(), assignment.value())
+                .map_err(|cause| StorageError::backend("apply an assignment to", table, cause))?;
+        }
+        let job = builder
+            .build()
+            .map_err(|cause| StorageError::backend("plan the update of", table, cause))?;
+        let result = job
+            .execute()
             .await
-            .map_err(|cause| StorageError::backend("open the table", table, cause))?;
+            .map_err(|cause| StorageError::backend("update", table, cause))?;
+        Ok(Updated {
+            rows: result.rows_updated,
+        })
+    }
+
+    async fn delete(&self, table: &str, matching: &Predicate) -> Result<Deleted, StorageError> {
+        let mut dataset = self.open(table).await?;
+
+        // Counted first, and logged before the delete runs. That ordering is the requirement rather
+        // than a convenience: a delete wider than intended has to be visible in the log at the moment
+        // it is about to happen, not deduced afterwards from rows that are no longer there.
+        let announced = u64::try_from(
+            dataset
+                .count_rows(Some(matching.as_str().to_owned()))
+                .await
+                .map_err(|cause| {
+                    StorageError::backend("count the rows to delete from", table, cause)
+                })?,
+        )
+        .unwrap_or(u64::MAX);
+        // WARNING rather than INFO: removing rows degrades what the database holds, and an operator who
+        // reads only warnings still has to see it.
+        tracing::warn!(
+            table,
+            predicate = matching.as_str(),
+            rows = announced,
+            "deleting rows",
+        );
+
+        let result = dataset
+            .delete(matching.as_str())
+            .await
+            .map_err(|cause| StorageError::backend("delete from", table, cause))?;
+        Ok(Deleted {
+            rows: result.num_deleted_rows,
+        })
+    }
+
+    async fn scan(&self, table: &str) -> Result<Vec<RecordBatch>, StorageError> {
+        let dataset = self.open(table).await?;
         dataset
             .scan()
             .try_into_stream()
@@ -180,6 +270,16 @@ impl TableStore for LanceStore {
 /// nothing they can act on.
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
+    /// An update was asked for with no columns to set.
+    ///
+    /// Its own variant rather than a silent no-op: an update that changes nothing is a mistake at the
+    /// call site, and reporting success would hide it.
+    #[error("an update of `{table}` was asked for with nothing to set")]
+    NothingToSet {
+        /// The table the update was aimed at.
+        table: String,
+    },
+
     /// The layer below refused or could not complete the operation.
     #[error("could not {operation} `{table}`")]
     Backend {
