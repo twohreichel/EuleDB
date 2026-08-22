@@ -12,6 +12,7 @@ use futures_util::TryStreamExt;
 
 use crate::crypto::{BlockSize, EncryptingProvider};
 use crate::measurement::{Measured, Order, RowId, RowIdSet, intersect_all, union_all, widest_scan};
+use crate::search::CandidateSource;
 use crate::writer_lock::{LockError, WriteLock};
 use crate::{Assignment, Compression, Deleted, Keyring, Predicate, TableDefinition, Updated};
 use lance::index::DatasetIndexExt as _;
@@ -133,6 +134,29 @@ impl LanceStore {
             write_lock: Some(Arc::new(lock)),
             session: None,
         })
+    }
+
+    /// Search within the rows an exact filter kept, never the other way round.
+    ///
+    /// The filter runs first and its result is handed to the candidate source, so ranking never considers
+    /// a row the caller excluded and never spends work doing so. The order is the point: generating
+    /// candidates first and filtering afterwards returns the same rows for a small table and the wrong
+    /// ones as soon as a limit truncates the candidates before the filter has had its say.
+    ///
+    /// # Errors
+    ///
+    /// Refuses an empty filter, as [`LanceStore::row_ids_all`] does — a search with no filter needs no
+    /// pre-filter and should ask the source directly. Otherwise reports the filter's failure, or passes
+    /// through the source's own.
+    pub async fn filtered_search(
+        &self,
+        table: &str,
+        filter: &[Predicate],
+        source: &impl CandidateSource,
+        limit: usize,
+    ) -> crate::Result<Vec<RowId>> {
+        let within = self.row_ids_all(table, filter).await?;
+        source.candidates(&within, limit).await
     }
 
     /// The rows matching **every** one of several predicates.
