@@ -20,6 +20,8 @@ arrow-schema.workspace = true
 euledb-storage.workspace = true
 
 [dev-dependencies]
+# The guide's examples construct an embedder, and they are compiled and run by the suite.
+euledb-embed.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 toml.workspace = true
