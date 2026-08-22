@@ -380,3 +380,21 @@ pub enum EmbedError {
         cause: String,
     },
 }
+
+/// The storage layer's port, implemented by this adapter.
+///
+/// The dependency points inwards: the storage layer decides *when* text is embedded and owns the trait,
+/// this crate decides *how*. That is why this `impl` lives here rather than there — and why the storage
+/// layer carries none of the model's dependency tree.
+impl euledb_storage::Embedder for Embedder {
+    fn embed_passage(&self, text: &str) -> Result<Vec<Vec<f32>>, String> {
+        Self::embed_passage(self, text)
+            .map(|chunks| {
+                chunks
+                    .into_iter()
+                    .map(|chunk| chunk.as_slice().to_vec())
+                    .collect()
+            })
+            .map_err(|failure| failure.to_string())
+    }
+}
